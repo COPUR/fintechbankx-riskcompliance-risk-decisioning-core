@@ -1,0 +1,7 @@
+bounded_context: "risk"
+service_id: "svc-rsk-decisioning"
+application_id: "app.rsk.decisioning"
+data_owner_pattern: "db_rsk_decisioning_prod"
+event_namespace: "evt.rsk.risk"
+owning_squad: "Risk and Compliance Decisioning Squad"
+wave: "4"
