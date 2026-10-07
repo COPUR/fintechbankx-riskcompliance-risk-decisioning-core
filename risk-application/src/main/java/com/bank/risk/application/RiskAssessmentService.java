@@ -21,6 +21,10 @@ public class RiskAssessmentService implements RiskAssessmentUseCase {
     public RiskAssessment assess(RiskEvaluationCommand command) {
         Optional<RiskAssessment> existing = repository.findByTransactionId(command.transactionId());
         if (existing.isPresent()) {
+            // Retries get the original decision; a different transaction under a reused id is refused.
+            if (!existing.get().matches(command.currency(), command.amount())) {
+                throw new TransactionAlreadyAssessedException(command.transactionId());
+            }
             return existing.get();
         }
 

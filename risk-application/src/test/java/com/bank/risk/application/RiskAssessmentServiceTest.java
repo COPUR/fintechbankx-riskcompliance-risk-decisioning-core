@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -66,5 +67,17 @@ class RiskAssessmentServiceTest {
 
         assertThat(service.findByTransactionId("TX-3")).isEmpty();
         verify(repository).findByTransactionId("TX-3");
+    }
+
+    @Test
+    void shouldRefuseAReusedTransactionIdWithADifferentAmount() {
+        RiskEvaluationCommand command = new RiskEvaluationCommand("TX-9", new BigDecimal("101"), "AED", false, 10);
+        RiskAssessment existing = RiskAssessment.create("TX-9", new BigDecimal("100"), "AED", 10, RiskDecision.ALLOW, List.of());
+        when(repository.findByTransactionId("TX-9")).thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service.assess(command))
+                .isInstanceOf(TransactionAlreadyAssessedException.class)
+                .hasMessageContaining("TX-9");
+        verify(repository, never()).save(any());
     }
 }

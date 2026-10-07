@@ -1,0 +1,132 @@
+package com.bank.risk;
+
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+/**
+ * Boots the whole service against PostgreSQL: Flyway builds
+ * sc_rsk_decisioning, Hibernate validates the entity against it, and a
+ * payment service assesses transactions over HTTP.
+ */
+@SpringBootTest
+@AutoConfigureMockMvc
+class RiskServiceIT {
+
+    @BeforeAll
+    static void requireDatabase() {
+        PostgresTestDatabase.assumeAvailable();
+    }
+
+    @DynamicPropertySource
+    static void database(DynamicPropertyRegistry registry) {
+        PostgresTestDatabase.register(registry);
+    }
+
+    @Autowired MockMvc mvc;
+    @Autowired JdbcTemplate jdbc;
+
+    @BeforeEach
+    void cleanTables() {
+        jdbc.update("delete from sc_rsk_decisioning.risk_assessment");
+    }
+
+    @Test
+    void flywayCreatesOnlyTheTablesThisServiceOwns() {
+        List<String> tables = jdbc.queryForList("""
+            select table_name from information_schema.tables
+            where table_schema = 'sc_rsk_decisioning' and table_name <> 'flyway_schema_history'
+            order by table_name
+            """, String.class);
+
+        assertThat(tables).containsExactly("legacy_credit_risk_assessment", "risk_assessment");
+    }
+
+    @Test
+    void assessmentIsStoredOnceAndReturnedOnRetry() throws Exception {
+        String first = assess("PAY-RISK-1", "60000.00", true, 80)
+            .andExpect(status().isCreated())
+            .andExpect(header().string("x-fapi-interaction-id", "it-interaction-1"))
+            .andExpect(jsonPath("$.decision").value("BLOCK"))
+            .andExpect(jsonPath("$.score").value(100))
+            .andReturn().getResponse().getContentAsString();
+        String retry = assess("PAY-RISK-1", "60000", true, 80)
+            .andExpect(status().isCreated())
+            .andReturn().getResponse().getContentAsString();
+
+        assertThat(retry).isEqualTo(first);
+        assertThat(jdbc.queryForObject("select count(*) from sc_rsk_decisioning.risk_assessment", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select reasons::text from sc_rsk_decisioning.risk_assessment", String.class))
+            .contains("HIGH_AMOUNT", "VERY_HIGH_AMOUNT", "HIGH_RISK_COUNTRY", "HIGH_VELOCITY");
+
+        mvc.perform(asService(get("/api/v1/risk/assessments/{id}", "PAY-RISK-1")))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.decision").value("BLOCK"));
+    }
+
+    @Test
+    void reusedTransactionIdWithAnotherAmountIsRefused() throws Exception {
+        assess("PAY-RISK-2", "100.00", false, 0).andExpect(status().isCreated())
+            .andExpect(jsonPath("$.decision").value("ALLOW"));
+
+        assess("PAY-RISK-2", "100.01", false, 0)
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("TRANSACTION_ALREADY_ASSESSED"));
+    }
+
+    @Test
+    void unknownTransactionIsA404WithTheInteractionId() throws Exception {
+        mvc.perform(asService(get("/api/v1/risk/assessments/{id}", "PAY-MISSING")))
+            .andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.code").value("ASSESSMENT_NOT_FOUND"))
+            .andExpect(jsonPath("$.interactionId").value("it-interaction-1"));
+    }
+
+    @Test
+    void onlyServicesAndStaffMayAssess() throws Exception {
+        mvc.perform(post("/api/v1/risk/assess")
+                .with(jwt().jwt(j -> j.subject("customer-1")).authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body("PAY-RISK-3", "10.00", false, 0)))
+            .andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/risk/assessments/{id}", "PAY-ANY")).andExpect(status().isUnauthorized());
+    }
+
+    private ResultActions assess(String transactionId, String amount, boolean highRiskCountry, int velocity) throws Exception {
+        return mvc.perform(asService(post("/api/v1/risk/assess"))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body(transactionId, amount, highRiskCountry, velocity)));
+    }
+
+    private static String body(String transactionId, String amount, boolean highRiskCountry, int velocity) {
+        return """
+            {"transactionId": "%s", "amount": %s, "currency": "AED", "highRiskCountry": %s, "velocityScore": %d}
+            """.formatted(transactionId, amount, highRiskCountry, velocity);
+    }
+
+    private static MockHttpServletRequestBuilder asService(MockHttpServletRequestBuilder request) {
+        return request.header("x-fapi-interaction-id", "it-interaction-1")
+            .with(jwt().jwt(j -> j.subject("svc-pay-initiation-settlement")).authorities(new SimpleGrantedAuthority("ROLE_SERVICE")));
+    }
+}

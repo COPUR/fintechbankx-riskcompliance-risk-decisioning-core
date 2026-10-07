@@ -30,7 +30,8 @@ class RiskControllerTest {
     @BeforeEach
     void setUp() {
         service = mock(RiskAssessmentService.class);
-        mockMvc = MockMvcBuilders.standaloneSetup(new RiskController(service)).build();
+        mockMvc = MockMvcBuilders.standaloneSetup(new RiskController(service))
+                .setControllerAdvice(new ApiExceptionHandler()).build();
     }
 
     @Test
@@ -59,6 +60,48 @@ class RiskControllerTest {
                 .andExpect(jsonPath("$.transactionId").value("TX-2"));
 
         mockMvc.perform(get("/api/v1/risk/assessments/TX-404"))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("ASSESSMENT_NOT_FOUND"));
+    }
+
+    @Test
+    void reusedTransactionIdWithADifferentAmountIsAConflict() throws Exception {
+        when(service.assess(any(RiskEvaluationCommand.class)))
+                .thenThrow(new com.bank.risk.application.TransactionAlreadyAssessedException("TX-3"));
+
+        mockMvc.perform(post("/api/v1/risk/assess")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {"transactionId":"TX-3","amount":201,"currency":"AED","highRiskCountry":false,"velocityScore":0}
+                        """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("TRANSACTION_ALREADY_ASSESSED"));
+    }
+
+    @Test
+    void invalidRequestsAreA400WithAStableCode() throws Exception {
+        mockMvc.perform(post("/api/v1/risk/assess")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {"transactionId":"TX-4","amount":-1,"currency":"AED","highRiskCountry":false,"velocityScore":0}
+                        """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.message").value("amount must be positive"));
+
+        mockMvc.perform(post("/api/v1/risk/assess")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{not json"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Malformed request body"));
+    }
+
+    @Test
+    void concurrentDuplicateIsAConflict() {
+        var response = new ApiExceptionHandler().duplicate(
+                new org.springframework.dao.DataIntegrityViolationException("uq_risk_assessment_transaction"));
+
+        org.assertj.core.api.Assertions.assertThat(response.getStatusCode().value()).isEqualTo(409);
+        org.assertj.core.api.Assertions.assertThat(response.getBody().code()).isEqualTo("DUPLICATE_REQUEST");
     }
 }

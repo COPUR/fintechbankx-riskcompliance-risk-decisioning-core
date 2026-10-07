@@ -2,6 +2,7 @@ package com.bank.risk.domain;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Objects;
 
@@ -63,8 +64,36 @@ public final class RiskAssessment {
                 score,
                 decision,
                 reasons,
-                Instant.now()
+                // Microseconds: the precision the decision of record is stored with, so a
+                // retry returns exactly the timestamp the first response carried.
+                Instant.now().truncatedTo(ChronoUnit.MICROS)
         );
+    }
+
+    /**
+     * Rebuilds a stored assessment. The decision and score are kept as they
+     * were made, even if the policy has changed since.
+     */
+    public static RiskAssessment rehydrate(RiskAssessmentSnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot is required");
+        return new RiskAssessment(
+                snapshot.id(),
+                snapshot.transactionId(),
+                snapshot.amount(),
+                snapshot.currency(),
+                snapshot.score(),
+                snapshot.decision(),
+                snapshot.reasons(),
+                snapshot.assessedAt()
+        );
+    }
+
+    /**
+     * True when a repeated request for this transaction describes the same
+     * transaction, so the stored decision can be returned for it.
+     */
+    public boolean matches(String otherCurrency, BigDecimal otherAmount) {
+        return currency.equals(otherCurrency) && amount.compareTo(otherAmount) == 0;
     }
 
     public RiskAssessmentId getId() {

@@ -1,0 +1,9 @@
+apiVersion: v2
+name: risk-decisioning-service
+description: "svc-rsk-decisioning, transaction risk decisions of record."
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+annotations:
+  fintechbankx.io/service-id: svc-rsk-decisioning
+  fintechbankx.io/owning-squad: Risk Decisioning Squad

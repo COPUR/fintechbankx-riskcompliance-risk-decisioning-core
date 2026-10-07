@@ -2,13 +2,16 @@ package com.bank.risk.infrastructure.persistence;
 
 import com.bank.risk.domain.RiskAssessment;
 import com.bank.risk.domain.port.out.RiskAssessmentRepository;
-import org.springframework.stereotype.Repository;
 
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
-@Repository
+
+/**
+ * Test double for {@link RiskAssessmentRepository}. Not a Spring bean: the
+ * service stores assessments in PostgreSQL through {@link JpaRiskAssessmentRepository}.
+ */
 public class InMemoryRiskAssessmentRepository implements RiskAssessmentRepository {
     private final Map<String, RiskAssessment> byTransactionId = new ConcurrentHashMap<>();
 

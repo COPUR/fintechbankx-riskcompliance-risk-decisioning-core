@@ -15,4 +15,4 @@
 - This is an extraction seed for bounded-context split migration.
 - Follow-up refactoring may be needed to remove residual cross-context coupling.
 - Build artifacts and local machine files are excluded by policy.
-
+- 2026-10-07: seed turned into a runnable service. The service owns `sc_rsk_decisioning` with its own Flyway migrations; the monolith's `risk_assessments` rows move with `db/backfill/run-backfill.sh` (see `docs/migration/RUNBOOK-EXTRACT-rsk-decisioning.md`).

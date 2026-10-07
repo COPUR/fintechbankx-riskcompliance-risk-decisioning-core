@@ -1,0 +1,55 @@
+# RUNBOOK-EXTRACT-rsk-decisioning
+
+Extraction of risk decisioning from `enterprise-loan-management-system` into
+`svc-rsk-decisioning` (this repository), following the strangler-fig steps of
+`fbx-monolith-extraction`.
+
+| Field | Value |
+|---|---|
+| Context / service | `rsk` / `svc-rsk-decisioning` |
+| Slice | Transaction risk assessment (score, ALLOW / REVIEW / BLOCK, reasons) and the history of credit risk assessments |
+| Owned data | `db_rsk_decisioning_<env>`, schema `sc_rsk_decisioning`: `risk_assessment`, `legacy_credit_risk_assessment` |
+| Events | none yet; there is no risk contract in the AsyncAPI catalog, and callers use the decision synchronously |
+| Called by | payment services: `POST /api/v1/risk/assess`, `GET /api/v1/risk/assessments/{transactionId}` |
+
+## 1. Data ownership split
+
+| Monolith object | Owner after the split | Notes |
+|---|---|---|
+| `risk_assessments` (V15, credit risk of loans and applications) | this service, `legacy_credit_risk_assessment` | read-only history; FKs to `customers`, `loans`, `loan_applications` dropped, ids kept as text |
+| `risk-context` JPA adapter (`risk_assessments` with transaction columns) | replaced | it mapped columns that V15 never had, so it never stored anything; transaction decisions now live in `risk_assessment` |
+| `customers`, `loans`, `loan_applications` | `svc-cus-profile-kyc`, `svc-ln-loan-lifecycle` | never copied here |
+| Fraud ML and vendor clients (`infrastructure/fraud` in the payments repo) | belongs here, not ported yet | payments screens with its rule-based adapter until this service exposes a model-backed score |
+
+Flyway migrations: `risk-infrastructure/src/main/resources/db/migration/V1__create_risk_assessment.sql`, `V2__create_legacy_credit_risk_assessment.sql`. The service never reads monolith tables and the monolith must not read `sc_rsk_decisioning`.
+
+## 2. Backfill and reconciliation
+
+`db/backfill/run-backfill.sh "<monolith conninfo>" "<risk service conninfo>"`
+
+1. Exports `risk_assessments` in one read-only snapshot.
+2. Stages them in `backfill_stage` and copies them into `legacy_credit_risk_assessment` (`02_transform_into_risk_service.sql`). Every column is kept; `customer_id` becomes text, the id the customer service keeps.
+3. Compares row counts, exposure and expected-loss totals, and checks each row's expected loss against EAD × PD × LGD (`03_reconcile.sql`). Any difference fails the run.
+
+The backfill is independent of the other contexts' backfills and idempotent (`ON CONFLICT DO NOTHING` on `assessment_id`). `scripts/migration/verify-backfill.sh` rehearses it on a scratch PostgreSQL and runs in CI (`deploy/data-split-rehearsal`).
+
+## 3. Cutover plan
+
+| Step | Action | Rollback |
+|---|---|---|
+| 1 | Deploy the service; run the backfill; reconcile | drop `sc_rsk_decisioning`, nothing else changed |
+| 2 | Payments call `POST /api/v1/risk/assess` with the payment id as `transactionId` and a client-credentials token (`SERVICE` role), behind a flag | flag off; payments keep their rule-based screening |
+| 3 | Monolith stops writing `risk_assessments`; re-run the backfill for late rows | monolith table is still intact |
+| 4 | After one full month-end cycle: drop the monolith table | restore from snapshot |
+
+## 4. Acceptance checklist
+
+- [x] Service builds and tests standalone (`ci/build`, `ci/test`, including PostgreSQL integration tests)
+- [x] Own schema and migrations; Hibernate validates the entity at startup
+- [x] One decision per transaction: retries return the stored decision, a reused id with another amount is a 409
+- [x] Credit risk history backfill rehearsed with reconciliation in CI
+- [x] Container image, Helm chart, Terraform validate in CI (`Deployability` workflow)
+- [ ] Payment services call this API (follow-up in the payments repositories)
+- [ ] Risk decision events, once a contract is added to the AsyncAPI catalog
+- [ ] Model-backed fraud score (port of the payments `infrastructure/fraud` package)
+- [ ] Production backfill and reconciliation report attached here
