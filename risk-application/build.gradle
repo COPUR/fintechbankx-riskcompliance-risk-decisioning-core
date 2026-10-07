@@ -3,7 +3,7 @@ apply plugin: 'jacoco'
 description = 'Risk Application - Use cases for risk assessment orchestration'
 
 dependencies {
-    api project(':risk-context:risk-domain')
+    api project(':risk-domain')
 
     testImplementation libs.junit.jupiter
     testImplementation libs.assertj.core
