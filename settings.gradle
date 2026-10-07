@@ -1,1 +1,5 @@
 rootProject.name = 'fintechbankx-risk-decisioning-service'
+
+include 'risk-domain'
+include 'risk-application'
+include 'risk-infrastructure'

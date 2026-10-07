@@ -3,10 +3,8 @@ apply plugin: 'jacoco'
 description = 'Risk Infrastructure - Web and persistence adapters for risk context'
 
 dependencies {
-    implementation project(':risk-context:risk-domain')
-    implementation project(':risk-context:risk-application')
-    implementation project(':shared-kernel')
-    implementation project(':shared-infrastructure')
+    implementation project(':risk-domain')
+    implementation project(':risk-application')
 
     implementation libs.spring.boot.starter.data.jpa
     implementation libs.spring.boot.starter.web
