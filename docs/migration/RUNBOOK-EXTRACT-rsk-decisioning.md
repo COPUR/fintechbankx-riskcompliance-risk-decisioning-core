@@ -71,12 +71,14 @@ chart ships no PrometheusRule. The platform's outbox rules key on the `service_i
 - Stalled relay, outage or broken credential:
   `max(outbox_oldest_pending_age_seconds{service_id="svc-rsk-decisioning"}) > 900` for 5m, severity critical,
   squad risk. The age is measured from `created_at` of the oldest row waiting for the relay.
-- Companion, why it is stalled: `increase(outbox_send_failures_total{service_id="svc-rsk-decisioning"}[10m]) > 0`
-  (tag `exception` names the cause).
-- Dependency: both series reach the managed Prometheus only once the AMP remote-write keep regex is widened from
-  `.*outbox_pending.*` to `outbox_.*` (platform owns that change).
-- `outbox_parked_events{service="svc-rsk-decisioning"}`: alert on any value above zero, because consumers are
-  missing those decisions until they are replayed.
+- Why it is stalled: `increase(outbox_send_failures_total{service_id="svc-rsk-decisioning"}[10m]) > 0`, severity
+  warning, squad risk (tag `exception` names the cause).
+- Parked events: any increase alerts, `delta(outbox_parked_events{service_id="svc-rsk-decisioning"}[10m]) > 0`,
+  squad risk (`delta`, not `increase`, because the series is a gauge). Consumers are missing those decisions until
+  they are replayed.
+- Dependency: these series reach the managed Prometheus only once the AMP remote-write keep regex is widened from
+  `.*outbox_pending.*` to `outbox_.*` (platform owns that change). Scraping relies on the pod's `prometheus.io/*`
+  annotations, which the PodMonitor reads; keep them.
 
 Manual park (operator only, change-logged). If one row is stuck on a non-payload error that only it triggers and
 the owning squad decides to let later events through, park it by hand with the reason; the relay then skips it:
