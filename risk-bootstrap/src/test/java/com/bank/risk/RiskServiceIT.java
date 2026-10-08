@@ -92,7 +92,7 @@ class RiskServiceIT {
             .andExpect(header().string("x-fapi-interaction-id", "it-interaction-1"))
             .andExpect(jsonPath("$.decision").value("BLOCK"))
             .andExpect(jsonPath("$.score").value(100))
-            .andExpect(jsonPath("$.ruleSetVersion").value("rsk-policy-v2"))
+            .andExpect(jsonPath("$.ruleSetVersion").value("rsk-policy-v3"))
             .andReturn().getResponse().getContentAsString();
         String retry = assess("PAY-RISK-1", "60000", true, 80)
             .andExpect(status().isCreated())
@@ -103,7 +103,7 @@ class RiskServiceIT {
         assertThat(jdbc.queryForObject("select reasons::text from sc_rsk_decisioning.risk_assessment", String.class))
             .contains("HIGH_AMOUNT", "VERY_HIGH_AMOUNT", "HIGH_RISK_COUNTRY", "HIGH_VELOCITY");
         assertThat(jdbc.queryForObject("select rule_set_version from sc_rsk_decisioning.risk_assessment", String.class))
-            .isEqualTo("rsk-policy-v2");
+            .isEqualTo("rsk-policy-v3");
         assertThat(jdbc.queryForMap("select attestation_source, attested_by from sc_rsk_decisioning.risk_assessment"))
             .containsEntry("attestation_source", "CALLER_ATTESTED")
             .containsEntry("attested_by", "svc-pay-initiation-settlement");

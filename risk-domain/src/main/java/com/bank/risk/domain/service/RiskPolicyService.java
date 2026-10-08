@@ -15,33 +15,51 @@ import java.util.Map;
  * currency without thresholds is never decided as low risk: the amount rules
  * are skipped, UNSUPPORTED_CURRENCY is added and the decision is at least
  * REVIEW. The country and velocity rules apply to every currency.
+ *
+ * Suspicious patterns (rsk-policy-v3) restore the monolith's fraud refusals
+ * (payment-context FraudDetectionServiceAdapter.isSuspiciousPattern): a round
+ * amount is decided BLOCK whatever the score, and only in a currency that has
+ * pattern limits (USD today).
  */
 public class RiskPolicyService {
 
     public static final String UNSUPPORTED_CURRENCY = "UNSUPPORTED_CURRENCY";
+    public static final String SUSPICIOUS_ROUND_AMOUNT = "SUSPICIOUS_ROUND_AMOUNT";
 
     /**
      * Version of these rules, stored with every decision. rsk-policy-v1 compared
      * every amount with 10000/50000 whatever its currency; v2 has per-currency
-     * thresholds. Change it whenever a rule or threshold changes.
+     * thresholds; v3 keeps v2's rules and adds the monolith's suspicious
+     * patterns. Change it whenever a rule or threshold changes.
      */
-    public static final String RULE_SET_VERSION = "rsk-policy-v2";
+    public static final String RULE_SET_VERSION = "rsk-policy-v3";
 
     /** The thresholds the policy has always used, now stated as USD (monolith evidence: home currency USD). */
     public static final Map<String, AmountThresholds> USD_THRESHOLDS = Map.of(
             "USD", new AmountThresholds(new BigDecimal("10000"), new BigDecimal("50000")));
 
+    /** The monolith's pattern figures, in USD like the thresholds: a multiple of 1000 above 10000. */
+    public static final Map<String, SuspiciousPatternLimits> USD_PATTERNS = Map.of(
+            "USD", new SuspiciousPatternLimits(new BigDecimal("1000"), new BigDecimal("10000")));
+
     private final Map<String, AmountThresholds> thresholds;
+    private final Map<String, SuspiciousPatternLimits> patterns;
 
     public RiskPolicyService() {
-        this(USD_THRESHOLDS);
+        this(USD_THRESHOLDS, USD_PATTERNS);
     }
 
     public RiskPolicyService(Map<String, AmountThresholds> thresholdsByCurrency) {
+        this(thresholdsByCurrency, USD_PATTERNS);
+    }
+
+    public RiskPolicyService(Map<String, AmountThresholds> thresholdsByCurrency,
+                             Map<String, SuspiciousPatternLimits> patternsByCurrency) {
         if (thresholdsByCurrency == null || thresholdsByCurrency.isEmpty()) {
             throw new IllegalArgumentException("at least one currency needs amount thresholds");
         }
         this.thresholds = Map.copyOf(thresholdsByCurrency);
+        this.patterns = Map.copyOf(patternsByCurrency == null ? Map.of() : patternsByCurrency);
     }
 
     public RiskAssessment evaluate(RiskEvaluationCommand command) {
@@ -79,8 +97,16 @@ public class RiskPolicyService {
             score = 100;
         }
 
+        // Patterns only where the amount rules apply, so an unsupported currency stays REVIEW.
+        SuspiciousPatternLimits pattern = limits == null ? null : patterns.get(command.currency());
+        boolean suspicious = false;
+        if (pattern != null && pattern.isSuspiciousRoundAmount(command.amount())) {
+            reasons.add(SUSPICIOUS_ROUND_AMOUNT);
+            suspicious = true;
+        }
+
         RiskDecision decision;
-        if (score >= 80) {
+        if (suspicious || score >= 80) {
             decision = RiskDecision.BLOCK;
         } else if (score >= 50 || limits == null) {
             decision = RiskDecision.REVIEW;
