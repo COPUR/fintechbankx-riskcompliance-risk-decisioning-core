@@ -99,6 +99,24 @@ class RiskControllerTest {
                 .andExpect(jsonPath("$.message").value("Malformed request body"));
     }
 
+    /** Caller-supplied risk facts fail closed: a missing fact is a 400, never the low-risk false or 0. */
+    @ParameterizedTest(name = "{0}")
+    @CsvSource(delimiter = '|', value = {
+        "highRiskCountry omitted  | {\"transactionId\":\"TX-6\",\"amount\":9000.00,\"currency\":\"USD\",\"velocityScore\":0}                          | highRiskCountry",
+        "highRiskCountry null     | {\"transactionId\":\"TX-6\",\"amount\":9000.00,\"currency\":\"USD\",\"highRiskCountry\":null,\"velocityScore\":0}  | highRiskCountry",
+        "velocityScore omitted    | {\"transactionId\":\"TX-6\",\"amount\":9000.00,\"currency\":\"USD\",\"highRiskCountry\":false}                       | velocityScore",
+        "velocityScore null       | {\"transactionId\":\"TX-6\",\"amount\":9000.00,\"currency\":\"USD\",\"highRiskCountry\":false,\"velocityScore\":null} | velocityScore"
+    })
+    void anOmittedOrNullRiskFactIsA400NotALowRiskDefault(String name, String body, String field) throws Exception {
+        mockMvc.perform(post("/api/v1/risk/assess")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString(field)));
+        org.mockito.Mockito.verifyNoInteractions(service);
+    }
+
     @ParameterizedTest(name = "{0}")
     @CsvSource(delimiter = '|', value = {
         "lower-case currency      | {\"transactionId\":\"TX-5\",\"amount\":10.00,\"currency\":\"aed\",\"highRiskCountry\":false,\"velocityScore\":0}   | currency",

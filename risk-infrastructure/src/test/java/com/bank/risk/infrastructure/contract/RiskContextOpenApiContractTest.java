@@ -43,6 +43,17 @@ class RiskContextOpenApiContractTest {
         }
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void caller_supplied_risk_facts_are_required_and_have_no_low_risk_default() throws IOException {
+        Map<String, Object> request = (Map<String, Object>) path(spec(), "components", "schemas", "RiskAssessmentRequest");
+        Map<String, Object> properties = (Map<String, Object>) request.get("properties");
+
+        assertThat((List<String>) request.get("required")).contains("highRiskCountry", "velocityScore");
+        assertThat((Map<String, Object>) properties.get("highRiskCountry")).doesNotContainKey("default");
+        assertThat((Map<String, Object>) properties.get("velocityScore")).doesNotContainKey("default");
+    }
+
     private static Map<String, Object> spec() throws IOException {
         return new Yaml().load(loadSpec());
     }
