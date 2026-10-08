@@ -34,7 +34,7 @@ class OutboxRiskEventPublisherTest {
 
     private static RiskAssessment assessment(String transactionId) {
         return RiskAssessment.create(new RiskEvaluationCommand(transactionId, new BigDecimal("12000.00"), "AED", false, 0, "svc-pay-initiation-settlement"), 60, RiskDecision.REVIEW,
-            List.of("HIGH_AMOUNT", "MEDIUM_VELOCITY"));
+            List.of("HIGH_AMOUNT", "MEDIUM_VELOCITY"), "rsk-policy-v2");
     }
 
     @Test

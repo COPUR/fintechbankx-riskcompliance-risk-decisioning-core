@@ -18,13 +18,14 @@ class RiskAssessmentResponseTest {
                 25,
                 RiskDecision.ALLOW,
                 List.of("COMPLIANT")
-        );
+        , "rsk-policy-v2");
 
         RiskAssessmentResponse response = RiskAssessmentResponse.from(assessment);
 
         assertThat(response.assessmentId()).isEqualTo(assessment.getId().getValue());
         assertThat(response.transactionId()).isEqualTo("TX-1");
         assertThat(response.decision()).isEqualTo("ALLOW");
+        assertThat(response.ruleSetVersion()).isEqualTo("rsk-policy-v2");
         assertThat(response.attestationSource()).isEqualTo("CALLER_ATTESTED");
         assertThat(response.attestedBy()).isEqualTo("svc-pay-initiation-settlement");
     }

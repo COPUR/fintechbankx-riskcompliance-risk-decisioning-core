@@ -152,9 +152,9 @@ class RiskOutboxIT {
             winner.setAutoCommit(false);
             try (Statement insert = winner.createStatement()) {
                 insert.executeUpdate("insert into " + ASSESSMENTS + " (assessment_id, transaction_id, amount, currency, "
-                    + "high_risk_country, velocity_score, score, decision, reasons, assessed_at, attestation_source, attested_by) "
+                    + "high_risk_country, velocity_score, score, decision, reasons, assessed_at, attestation_source, attested_by, rule_set_version) "
                     + "values ('RISK-RACE-WINNER', 'PAY-RACE-1', 100.00, 'USD', true, 80, 70, 'REVIEW', "
-                    + "'[\"HIGH_RISK_COUNTRY\",\"HIGH_VELOCITY\"]'::jsonb, now(), 'CALLER_ATTESTED', 'svc-pay-initiation-settlement')");
+                    + "'[\"HIGH_RISK_COUNTRY\",\"HIGH_VELOCITY\"]'::jsonb, now(), 'CALLER_ATTESTED', 'svc-pay-initiation-settlement', 'rsk-policy-v2')");
             }
             // The loser cannot see the uncommitted winner, evaluates, and blocks on the unique index.
             loser = LOSER.submit(() -> assess("PAY-RACE-1", "100.00").andReturn());
@@ -196,7 +196,7 @@ class RiskOutboxIT {
     @Test
     void theOutboxRefusesToWriteOutsideATransaction() {
         RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("PAY-NO-TX", new BigDecimal("1.00"), "AED", false, 0, "svc-pay-initiation-settlement"), 0,
-            RiskDecision.ALLOW, List.of());
+            RiskDecision.ALLOW, List.of(), "rsk-policy-v2");
 
         assertThatThrownBy(() -> publisher.publish(assessment.getDomainEvents()))
             .isInstanceOf(IllegalTransactionStateException.class);
@@ -229,7 +229,7 @@ class RiskOutboxIT {
     void theRequestTraceIsStoredWithTheEventAndSentAsTraceparent() {
         String traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
         RiskAssessment assessment = RiskAssessment.create(
-            new RiskEvaluationCommand("PAY-TRACE-1", new BigDecimal("20.00"), "AED", false, 0, "svc-pay-initiation-settlement"), 0, RiskDecision.ALLOW, List.of());
+            new RiskEvaluationCommand("PAY-TRACE-1", new BigDecimal("20.00"), "AED", false, 0, "svc-pay-initiation-settlement"), 0, RiskDecision.ALLOW, List.of(), "rsk-policy-v2");
         MDC.put("traceId", "4bf92f3577b34da6a3ce929d0e0e4736");
         MDC.put("spanId", "00f067aa0ba902b7");
         try {

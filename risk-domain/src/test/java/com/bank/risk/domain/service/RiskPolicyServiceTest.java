@@ -52,6 +52,13 @@ class RiskPolicyServiceTest {
     }
 
     @Test
+    void everyDecisionRecordsTheRuleSetThatMadeIt() {
+        assertThat(RiskPolicyService.RULE_SET_VERSION).isEqualTo("rsk-policy-v2");
+        assertThat(service.evaluate(command("100", "USD", false, 0)).getRuleSetVersion()).isEqualTo("rsk-policy-v2");
+        assertThat(service.evaluate(command("100", "JPY", true, 80)).getRuleSetVersion()).isEqualTo("rsk-policy-v2");
+    }
+
+    @Test
     void usdThresholdsAreTheCurrentValuesAndExclusive() {
         assertThat(service.evaluate(command("10000.00", "USD", false, 0)).getReasons()).isEmpty();
         assertThat(service.evaluate(command("10000.01", "USD", false, 0)).getReasons()).containsExactly("HIGH_AMOUNT");

@@ -19,7 +19,7 @@ class RiskAssessedEventTest {
     @Test
     void aNewAssessmentRaisesExactlyOneAssessedEventWithItsFacts() {
         RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("PAY-77", new BigDecimal("60000.00"), "AED", false, 0, "svc-pay-initiation-settlement"), 100,
-                RiskDecision.BLOCK, List.of("HIGH_AMOUNT", "VERY_HIGH_AMOUNT", "HIGH_RISK_COUNTRY", "HIGH_VELOCITY"));
+                RiskDecision.BLOCK, List.of("HIGH_AMOUNT", "VERY_HIGH_AMOUNT", "HIGH_RISK_COUNTRY", "HIGH_VELOCITY"), "rsk-policy-v2");
 
         assertThat(assessment.getDomainEvents()).hasSize(1);
         RiskAssessedEvent event = (RiskAssessedEvent) assessment.getDomainEvents().getFirst();
@@ -39,7 +39,7 @@ class RiskAssessedEventTest {
     void aRehydratedAssessmentRaisesNothingBecauseTheFactWasAlreadyPublished() {
         RiskAssessment stored = RiskAssessment.rehydrate(new RiskAssessmentSnapshot(
                 RiskAssessmentId.of("RISK-STORED"), "PAY-78", new BigDecimal("100.00"), "AED", false, 0, 0,
-                RiskDecision.ALLOW, List.of(), DECIDED, AttestationSource.CALLER_ATTESTED, "svc-pay-initiation-settlement"));
+                RiskDecision.ALLOW, List.of(), DECIDED, AttestationSource.CALLER_ATTESTED, "svc-pay-initiation-settlement", "rsk-policy-v2"));
 
         assertThat(stored.getDomainEvents()).isEmpty();
     }
@@ -47,7 +47,7 @@ class RiskAssessedEventTest {
     @Test
     void clearingTheEventsAfterPublishingEmptiesTheList() {
         RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("PAY-79", new BigDecimal("45.10"), "AED", false, 0, "svc-pay-initiation-settlement"), 15,
-                RiskDecision.ALLOW, List.of("MEDIUM_VELOCITY"));
+                RiskDecision.ALLOW, List.of("MEDIUM_VELOCITY"), "rsk-policy-v2");
 
         assessment.clearDomainEvents();
 
@@ -57,7 +57,7 @@ class RiskAssessedEventTest {
     @Test
     void theEventListCannotBeChangedFromOutside() {
         RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("PAY-80", new BigDecimal("1.00"), "AED", false, 0, "svc-pay-initiation-settlement"), 0,
-                RiskDecision.ALLOW, List.of());
+                RiskDecision.ALLOW, List.of(), "rsk-policy-v2");
 
         assertThatThrownBy(() -> assessment.getDomainEvents().clear())
                 .isInstanceOf(UnsupportedOperationException.class);

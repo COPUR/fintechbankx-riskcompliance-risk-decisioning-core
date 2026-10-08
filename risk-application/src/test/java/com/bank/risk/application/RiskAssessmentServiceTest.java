@@ -41,7 +41,7 @@ class RiskAssessmentServiceTest {
     @Test
     void shouldReturnExistingAssessmentWhenTransactionAlreadyAssessed() {
         RiskEvaluationCommand command = new RiskEvaluationCommand("TX-1", new BigDecimal("100"), "AED", false, 10, "svc-pay-initiation-settlement");
-        RiskAssessment existing = RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("100.00"), "AED", false, 10, "svc-pay-initiation-settlement"), 10, RiskDecision.ALLOW, List.of());
+        RiskAssessment existing = RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("100.00"), "AED", false, 10, "svc-pay-initiation-settlement"), 10, RiskDecision.ALLOW, List.of(), "rsk-policy-v2");
 
         when(repository.findByTransactionId("TX-1")).thenReturn(Optional.of(existing));
 
@@ -56,7 +56,7 @@ class RiskAssessmentServiceTest {
     @Test
     void shouldEvaluateAndPersistWhenNoExistingAssessment() {
         RiskEvaluationCommand command = new RiskEvaluationCommand("TX-2", new BigDecimal("200"), "AED", true, 60, "svc-pay-initiation-settlement");
-        RiskAssessment assessed = RiskAssessment.create(new RiskEvaluationCommand("TX-2", new BigDecimal("200"), "AED", false, 0, "svc-pay-initiation-settlement"), 85, RiskDecision.BLOCK, List.of("HIGH_RISK_COUNTRY"));
+        RiskAssessment assessed = RiskAssessment.create(new RiskEvaluationCommand("TX-2", new BigDecimal("200"), "AED", false, 0, "svc-pay-initiation-settlement"), 85, RiskDecision.BLOCK, List.of("HIGH_RISK_COUNTRY"), "rsk-policy-v2");
 
         when(repository.findByTransactionId("TX-2")).thenReturn(Optional.empty());
         when(policyService.evaluate(command)).thenReturn(assessed);
@@ -73,7 +73,7 @@ class RiskAssessmentServiceTest {
     void aNewAssessmentIsSavedThenItsAssessedEventPublishedOnce() {
         RiskEvaluationCommand command = new RiskEvaluationCommand("TX-5", new BigDecimal("12000.00"), "AED", false, 45, "svc-pay-initiation-settlement");
         RiskAssessment assessed = RiskAssessment.create(new RiskEvaluationCommand("TX-5", new BigDecimal("12000.00"), "AED", false, 0, "svc-pay-initiation-settlement"), 45,
-                RiskDecision.ALLOW, List.of("HIGH_AMOUNT", "MEDIUM_VELOCITY"));
+                RiskDecision.ALLOW, List.of("HIGH_AMOUNT", "MEDIUM_VELOCITY"), "rsk-policy-v2");
         RiskAssessedEvent raised = (RiskAssessedEvent) assessed.getDomainEvents().getFirst();
         when(repository.findByTransactionId("TX-5")).thenReturn(Optional.empty());
         when(policyService.evaluate(command)).thenReturn(assessed);
@@ -91,7 +91,7 @@ class RiskAssessmentServiceTest {
     @Test
     void nothingIsPublishedWhenTheSaveFails() {
         RiskEvaluationCommand command = new RiskEvaluationCommand("TX-6", new BigDecimal("50.00"), "AED", false, 0, "svc-pay-initiation-settlement");
-        RiskAssessment assessed = RiskAssessment.create(new RiskEvaluationCommand("TX-6", new BigDecimal("50.00"), "AED", false, 0, "svc-pay-initiation-settlement"), 0, RiskDecision.ALLOW, List.of());
+        RiskAssessment assessed = RiskAssessment.create(new RiskEvaluationCommand("TX-6", new BigDecimal("50.00"), "AED", false, 0, "svc-pay-initiation-settlement"), 0, RiskDecision.ALLOW, List.of(), "rsk-policy-v2");
         when(repository.findByTransactionId("TX-6")).thenReturn(Optional.empty());
         when(policyService.evaluate(command)).thenReturn(assessed);
         when(repository.save(assessed)).thenThrow(new IllegalStateException("unique transaction_id"));
@@ -111,7 +111,7 @@ class RiskAssessmentServiceTest {
     @Test
     void shouldRefuseAReusedTransactionIdWithADifferentAmount() {
         RiskEvaluationCommand command = new RiskEvaluationCommand("TX-9", new BigDecimal("101"), "AED", false, 10, "svc-pay-initiation-settlement");
-        RiskAssessment existing = RiskAssessment.create(new RiskEvaluationCommand("TX-9", new BigDecimal("100"), "AED", false, 0, "svc-pay-initiation-settlement"), 10, RiskDecision.ALLOW, List.of());
+        RiskAssessment existing = RiskAssessment.create(new RiskEvaluationCommand("TX-9", new BigDecimal("100"), "AED", false, 0, "svc-pay-initiation-settlement"), 10, RiskDecision.ALLOW, List.of(), "rsk-policy-v2");
         when(repository.findByTransactionId("TX-9")).thenReturn(Optional.of(existing));
 
         assertThatThrownBy(() -> service.assess(command))
@@ -124,7 +124,7 @@ class RiskAssessmentServiceTest {
     @Test
     void aReusedTransactionIdWithTheHighRiskFlagFlippedIsRefused() {
         RiskAssessment existing = RiskAssessment.create(
-                new RiskEvaluationCommand("TX-10", new BigDecimal("100.00"), "AED", false, 0, "svc-pay-initiation-settlement"), 0, RiskDecision.ALLOW, List.of());
+                new RiskEvaluationCommand("TX-10", new BigDecimal("100.00"), "AED", false, 0, "svc-pay-initiation-settlement"), 0, RiskDecision.ALLOW, List.of(), "rsk-policy-v2");
         when(repository.findByTransactionId("TX-10")).thenReturn(Optional.of(existing));
 
         assertThatThrownBy(() -> service.assess(new RiskEvaluationCommand("TX-10", new BigDecimal("100.00"), "AED", true, 0, "svc-pay-initiation-settlement")))
