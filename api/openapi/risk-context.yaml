@@ -155,7 +155,7 @@ components:
   schemas:
     RiskAssessmentRequest:
       type: object
-      required: [transactionId, amount, currency, velocityScore]
+      required: [transactionId, amount, currency, highRiskCountry, velocityScore]
       properties:
         transactionId:
           type: string
@@ -176,11 +176,18 @@ components:
           description: Upper-case ISO 4217 code, for example AED.
         highRiskCountry:
           type: boolean
-          default: false
+          description: |-
+            Caller's statement that the counterparty country is high risk.
+            Required: an omitted or null value is a 400 INVALID_REQUEST, never
+            taken as false. Stored with the decision as caller-attested.
         velocityScore:
           type: integer
           minimum: 0
           maximum: 100
+          description: |-
+            Caller's velocity score, 0 to 100. Required: an omitted or null
+            value is a 400 INVALID_REQUEST, never taken as 0. Stored with the
+            decision as caller-attested.
     RiskAssessmentResponse:
       type: object
       required: [assessmentId, transactionId, score, decision, reasons, assessedAt]
