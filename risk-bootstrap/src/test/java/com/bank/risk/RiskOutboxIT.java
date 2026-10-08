@@ -301,6 +301,44 @@ class RiskOutboxIT {
         assertThat(outbox.oldestPendingAgeSeconds()).as("parked rows are counted by outbox.parked.events instead").isZero();
     }
 
+    /** ADR-021 decision 4 against PostgreSQL: a non-payload failure stops the batch and writes nothing to the row. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void aNonPayloadFailureStopsTheBatchMarksNothingAndTheNextRunPublishesBothInOrder() throws Exception {
+        assess("PAY-STOP-1", "10.00").andExpect(status().isCreated());
+        assess("PAY-STOP-2", "20.00").andExpect(status().isCreated());
+        when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.failedFuture(new KafkaProducerException(
+            new ProducerRecord<>("evt.rsk.risk.assessed.v1", "k", "v"), "Failed to send",
+            new org.apache.kafka.common.errors.NetworkException("broker down"))));
+        OutboxRelay relay = relayOver(outbox);
+
+        assertThat(relay.relayOnce()).isZero();
+
+        assertThat(jdbc.queryForList("select attempts, last_error, first_failed_at, parked_at, published_at from " + OUTBOX))
+            .hasSize(2)
+            .allSatisfy(row -> {
+                assertThat(row.get("attempts")).isEqualTo(0);
+                assertThat(row.get("last_error")).isNull();
+                assertThat(row.get("first_failed_at")).isNull();
+                assertThat(row.get("parked_at")).isNull();
+                assertThat(row.get("published_at")).isNull();
+            });
+        assertThat(outbox.countByPublishedAtIsNull()).isEqualTo(2);
+        Mockito.verify(kafka, Mockito.times(1)).send(any(ProducerRecord.class));
+
+        Mockito.reset(kafka);
+        when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
+        Thread.sleep(1_100); // past the first backoff step (risk.outbox.relay.interval, 1 s)
+        assertThat(relay.relayOnce()).isEqualTo(2);
+
+        ArgumentCaptor<ProducerRecord<String, String>> records = ArgumentCaptor.forClass(ProducerRecord.class);
+        Mockito.verify(kafka, Mockito.times(2)).send(records.capture());
+        assertThat(records.getAllValues()).extracting(ProducerRecord::key)
+            .as("created_seq order").containsExactlyElementsOf(
+                jdbc.queryForList("select aggregate_id from " + OUTBOX + " order by created_seq", String.class));
+        assertThat(outbox.countByPublishedAtIsNull()).isZero();
+    }
+
     /**
      * Two replicas relay at the same moment, deterministically: the winner's
      * first send blocks until the loser has called tryRelayLock, so the loser
