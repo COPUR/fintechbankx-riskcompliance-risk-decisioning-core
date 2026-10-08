@@ -82,6 +82,8 @@ class RiskEventsAsyncApiContractTest {
         assertThat(data.at("/amount/currency").asText()).matches(pattern(money, "currency"));
         String reasonPattern = at(dataSchema, "properties", "reasons", "items", "pattern");
         data.get("reasons").forEach(reason -> assertThat(reason.asText()).matches(reasonPattern));
+        // rsk-policy-v3 reason codes are additive: the 1.0.0 pattern already accepts them.
+        assertThat(List.of("SUSPICIOUS_ROUND_AMOUNT", "SUSPICIOUS_MOBILE_AMOUNT")).allMatch(code -> code.matches(reasonPattern));
     }
 
     private String pattern(Map<String, Object> schema, String property) {
