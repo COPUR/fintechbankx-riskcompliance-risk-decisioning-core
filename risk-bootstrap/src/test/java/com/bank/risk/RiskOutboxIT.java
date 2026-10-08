@@ -14,6 +14,7 @@ import com.bank.risk.infrastructure.transaction.TransactionalRiskAssessmentUseCa
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.errors.RecordTooLargeException;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,6 +28,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.kafka.core.KafkaProducerException;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -206,7 +208,7 @@ class RiskOutboxIT {
             .andReturn().getResponse().getContentAsString()).get("assessmentId").asText();
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
-            Clock.systemUTC(), 10, Duration.ofSeconds(1), Duration.ofDays(7));
+            Clock.systemUTC(), 10, Duration.ofSeconds(1), Duration.ofDays(7), 10);
 
         assertThat(relay.relayOnce()).isEqualTo(1);
         assertThat(relay.relayOnce()).isZero();
@@ -238,12 +240,47 @@ class RiskOutboxIT {
 
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), Clock.systemUTC(), 10,
-            Duration.ofSeconds(1), Duration.ofDays(7)).relayOnce();
+            Duration.ofSeconds(1), Duration.ofDays(7), 10).relayOnce();
 
         ArgumentCaptor<ProducerRecord<String, String>> records = ArgumentCaptor.forClass(ProducerRecord.class);
         Mockito.verify(kafka).send(records.capture());
         assertThat(new String(records.getValue().headers().lastHeader("traceparent").value(), StandardCharsets.UTF_8))
             .isEqualTo(traceparent);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aRowThatCanNeverBeSentIsParkedSkippedAndCountedWhileLaterRowsArePublished() throws Exception {
+        assess("PAY-PARK-1", "10.00").andExpect(status().isCreated());
+        assess("PAY-PARK-2", "20.00").andExpect(status().isCreated());
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.failedFuture(new KafkaProducerException(
+                new ProducerRecord<>("evt.rsk.risk.assessed.v1", "k", "v"), "Failed to send",
+                new RecordTooLargeException("too large"))))
+            .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
+        OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
+            Clock.systemUTC(), 10, Duration.ofSeconds(1), Duration.ofDays(7), 10);
+
+        assertThat(relay.relayOnce()).isEqualTo(1);
+        assertThat(relay.relayOnce()).as("the parked row is not picked up again").isZero();
+
+        Mockito.verify(kafka, Mockito.times(2)).send(any(ProducerRecord.class));
+        Map<String, Object> parked = jdbc.queryForMap("select o.parked_at, o.last_error, o.attempts from " + OUTBOX
+            + " o where o.payload -> 'data' ->> 'transactionId' = 'PAY-PARK-1'");
+        assertThat(parked.get("parked_at")).isNotNull();
+        assertThat((String) parked.get("last_error")).startsWith("RecordTooLargeException");
+        assertThat(parked.get("attempts")).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from " + OUTBOX
+            + " where published_at is not null and payload -> 'data' ->> 'transactionId' = 'PAY-PARK-2'", Integer.class))
+            .isEqualTo(1);
+        assertThat(outbox.countByPublishedAtIsNullAndParkedAtIsNotNull()).isEqualTo(1);
+        assertThat(outbox.countByPublishedAtIsNullAndParkedAtIsNull()).isZero();
+
+        // Manual replay (runbook): un-park and reset the attempts; the next run publishes it.
+        jdbc.update("update " + OUTBOX + " set parked_at = null, attempts = 0, last_error = null where parked_at is not null");
+        when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
+        assertThat(relay.relayOnce()).isEqualTo(1);
+        assertThat(outbox.countByPublishedAtIsNull()).isZero();
     }
 
     private void awaitLockWait() throws InterruptedException {

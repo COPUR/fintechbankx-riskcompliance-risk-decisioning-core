@@ -25,12 +25,23 @@ class OutboxConfigurationTest {
     @Test
     void pendingGaugeIsExportedAsOutboxPendingEventsForThisService() {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        when(outbox.countByPublishedAtIsNull()).thenReturn(4L);
+        when(outbox.countByPublishedAtIsNullAndParkedAtIsNull()).thenReturn(4L);
 
         configuration.riskOutboxPendingGauge(registry, outbox);
 
         Gauge gauge = registry.get("outbox.pending.events").tag("service", "svc-rsk-decisioning").gauge();
-        assertThat(gauge.value()).isEqualTo(4.0);
+        assertThat(gauge.value()).as("parked rows are not waiting for the relay").isEqualTo(4.0);
+    }
+
+    @Test
+    void parkedGaugeIsExportedAsOutboxParkedEventsForThisService() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        when(outbox.countByPublishedAtIsNullAndParkedAtIsNotNull()).thenReturn(2L);
+
+        configuration.riskOutboxParkedGauge(registry, outbox);
+
+        Gauge gauge = registry.get("outbox.parked.events").tag("service", "svc-rsk-decisioning").gauge();
+        assertThat(gauge.value()).isEqualTo(2.0);
     }
 
     @Test
@@ -45,7 +56,7 @@ class OutboxConfigurationTest {
         OutboxConfiguration.RelayConfiguration relayConfiguration = new OutboxConfiguration.RelayConfiguration();
 
         OutboxRelay relay = relayConfiguration.outboxRelay(outbox, mock(KafkaTemplate.class),
-            mock(PlatformTransactionManager.class), Clock.systemUTC(), 100, Duration.ofSeconds(10), Duration.ofDays(7));
+            mock(PlatformTransactionManager.class), Clock.systemUTC(), 100, Duration.ofSeconds(10), Duration.ofDays(7), 10);
 
         assertThat(relay).isNotNull();
         assertThat(relayConfiguration.relaySchedule(relay)).isNotNull();
