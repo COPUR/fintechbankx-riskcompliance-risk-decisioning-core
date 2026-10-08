@@ -54,6 +54,8 @@ class OutboxConfigurationTest {
 
         Gauge gauge = registry.get("outbox.parked.events").tag("service", "svc-rsk-decisioning").gauge();
         assertThat(gauge.value()).isEqualTo(2.0);
+        assertThat(gauge.getId().getDescription())
+            .isEqualTo("Risk events parked on a payload error or by an operator; replay by hand");
     }
 
     @Test
