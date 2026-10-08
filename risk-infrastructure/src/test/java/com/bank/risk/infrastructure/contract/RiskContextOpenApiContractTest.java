@@ -34,12 +34,14 @@ class RiskContextOpenApiContractTest {
 
         assertThat(dpop).containsEntry("name", "DPoP").containsEntry("in", "header").containsEntry("required", false);
         assertThat((String) dpop.get("description")).contains("TPP").contains("not verify");
+        assertThat((Map<String, Object>) path(spec(), "components", "securitySchemes"))
+            .as("no security scheme the service does not accept").doesNotContainKey("dpopAuth");
         for (String operation : List.of("/api/v1/risk/assess", "/api/v1/risk/assessments/{transactionId}")) {
             Map<String, Object> pathItem = (Map<String, Object>) path(spec(), "paths", operation);
             Map<String, Object> op = (Map<String, Object>) pathItem.values().iterator().next();
             assertThat((List<Map<String, Object>>) op.get("security"))
-                .as("%s must not require a DPoP-bound token", operation)
-                .noneMatch(requirement -> requirement.containsKey("dpopAuth") && requirement.size() > 1);
+                .as("%s accepts a bearer token only; DPoP is neither required nor an alternative", operation)
+                .containsExactly(Map.of("bearerAuth", List.of()));
         }
     }
 
