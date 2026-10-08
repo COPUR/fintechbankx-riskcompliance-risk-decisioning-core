@@ -49,15 +49,19 @@ The backfill is independent of the other contexts' backfills and can be re-run u
 
 ## 4. Parked outbox events
 
-`OutboxRelay` parks a row (sets `parked_at`, keeps the reason in `last_error`) at once when Kafka refuses it
-permanently (`RecordTooLargeException`, `SerializationException`, `InvalidTopicException`,
-`TopicAuthorizationException`, any error that is not a Kafka `RetriableException` or a timeout).
+`OutboxRelay` parks a row (sets `parked_at`, keeps the reason in `last_error`) at once only when the failure is
+specific to that record: `RecordTooLargeException`, `SerializationException` or `InvalidTopicException`. The batch
+then continues with the next row.
 
-Retryable failures (broker, DNS or mesh-egress outages, timeouts) do not count toward parking: they stop the batch
-and the row is retried on the next run, however many times it fails. Such a row is parked only when it has been
-failing continuously for longer than `risk.outbox.relay.retryable-park-after` (`OUTBOX_RELAY_RETRYABLE_PARK_AFTER`,
-default `PT24H`), measured from its `first_failed_at` (V6). There is no attempt-count cap. An ordinary outage
-therefore only delays events; nothing needs replaying after it.
+Every other failure stops the batch and the row is retried on the next run, however many times it fails: retriable
+Kafka errors and timeouts (broker, DNS or mesh-egress outages), authentication and authorization errors
+(`SaslAuthenticationException` from a broken IRSA/IAM setup, `AuthenticationException`, `AuthorizationException`,
+`TopicAuthorizationException` from a missing topic grant), and anything unclassified (a generic `KafkaException`,
+any other exception). These affect every row alike, so parking them would only move the whole queue into the parked
+state. Such a row is parked only when it has been failing continuously for longer than
+`risk.outbox.relay.retryable-park-after` (`OUTBOX_RELAY_RETRYABLE_PARK_AFTER`, default `PT24H`), measured from its
+`first_failed_at` (V6). There is no attempt-count cap. An outage or a credential problem therefore only delays
+events; fix the cause (the `last_error` of the head row names it) and the relay catches up by itself.
 
 Alerts:
 - `outbox_oldest_pending_age_seconds{service="svc-rsk-decisioning"}`: age of the oldest row waiting for the relay.

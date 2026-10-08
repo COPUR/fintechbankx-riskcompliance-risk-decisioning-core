@@ -1,7 +1,9 @@
 package com.bank.risk.infrastructure.outbox;
 
 import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.common.errors.RetriableException;
+import org.apache.kafka.common.errors.InvalidTopicException;
+import org.apache.kafka.common.errors.RecordTooLargeException;
+import org.apache.kafka.common.errors.SerializationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.core.KafkaProducerException;
@@ -16,7 +18,6 @@ import java.util.List;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 /**
  * Relays committed outbox rows to Kafka in insertion order.
@@ -27,19 +28,21 @@ import java.util.concurrent.TimeoutException;
  *
  * A failed send is handled by what failed:
  * <ul>
- *   <li>retryable (a Kafka {@link RetriableException}, including the producer's
- *   own timeouts, or the relay's send timeout): the batch stops and the row is
- *   retried on the next run, so later events cannot overtake it;</li>
- *   Retryable failures never count toward parking, so an ordinary broker or
- *   egress outage only delays events;</li>
- *   <li>permanent (RecordTooLarge, Serialization, InvalidTopic,
- *   TopicAuthorization, anything else that is not retriable), or a retryable
- *   failure of a row that has been failing continuously for longer than
- *   {@code retryableParkAfter} (default 24 h, from first_failed_at): the row is parked
- *   (parked_at set, reason in last_error) and the batch continues with the next
- *   row. Parked rows are skipped until replayed by hand (runbook "Parked outbox
- *   events") and counted by the outbox.parked.events gauge.</li>
+ *   <li>payload-specific (RecordTooLarge, Serialization, InvalidTopic): this
+ *   row can never be sent, so it is parked at once (parked_at set, reason in
+ *   last_error) and the batch continues with the next row;</li>
+ *   <li>everything else: retriable Kafka errors and timeouts, authentication
+ *   and authorization errors (SASL/IAM, topic ACLs), and anything unclassified.
+ *   These affect every row alike, so the batch stops and the row is retried on
+ *   the next run; later events cannot overtake it, and an outage or a broken
+ *   credential only delays events. Such a row is parked only once it has been
+ *   failing continuously for longer than {@code retryableParkAfter} (default
+ *   24 h, from first_failed_at).</li>
  * </ul>
+ * Parked rows are skipped until replayed by hand (runbook "Parked outbox
+ * events") and counted by the outbox.parked.events gauge; a stalled relay
+ * shows in outbox.oldest.pending.age.seconds.
+ *
  * Each risk assessment raises exactly one event, so parking a row never puts
  * two events of one aggregate out of order.
  */
@@ -97,7 +100,7 @@ public class OutboxRelay {
                 } catch (Exception e) {
                     Instant now = clock.instant();
                     row.markFailed(describe(e), now);
-                    if (isRetryable(e) && !now.isAfter(row.getFirstFailedAt().plus(retryableParkAfter))) {
+                    if (!isPayloadSpecific(e) && !now.isAfter(row.getFirstFailedAt().plus(retryableParkAfter))) {
                         log.warn("Outbox relay could not publish event {} to {} (attempt {}, failing since {}); will retry",
                             row.getEventId(), row.getTopic(), row.getAttempts(), row.getFirstFailedAt(), e);
                         break;
@@ -117,10 +120,16 @@ public class OutboxRelay {
         return deleted == null ? 0 : deleted;
     }
 
-    /** Retryable: a Kafka RetriableException (timeouts included) or the relay's own send timeout. */
-    static boolean isRetryable(Throwable failure) {
+    /**
+     * Payload-specific: the failure belongs to this record (too large, not
+     * serializable, invalid topic name), so retrying can never succeed and the
+     * next row may still go through. Every other failure, auth errors and
+     * unclassified ones included, is treated as retryable.
+     */
+    static boolean isPayloadSpecific(Throwable failure) {
         for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
-            if (cause instanceof RetriableException || cause instanceof TimeoutException) {
+            if (cause instanceof RecordTooLargeException || cause instanceof SerializationException
+                    || cause instanceof InvalidTopicException) {
                 return true;
             }
         }
