@@ -55,6 +55,12 @@ jobs:
           fi
           grep -q "name: aws-secrets-manager" <<<"$rendered"
           grep -q "app: risk-decisioning-service" <<<"$rendered"
+          # The relay stays off until the mesh contract gives namespace risk MSK egress (runbook step 4).
+          if ! grep -q 'OUTBOX_RELAY_ENABLED: "false"' <<<"$rendered"; then
+            echo "chart must default OUTBOX_RELAY_ENABLED to \"false\"" >&2
+            exit 1
+          fi
+          grep -q 'OUTBOX_RELAY_ENABLED: "true"' <<<"$(helm template ci "$chart" $args --set config.OUTBOX_RELAY_ENABLED=true)"
 
   terraform:
     name: deploy/terraform
