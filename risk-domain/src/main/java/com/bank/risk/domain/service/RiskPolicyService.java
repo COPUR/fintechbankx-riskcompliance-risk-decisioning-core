@@ -18,13 +18,14 @@ import java.util.Map;
  *
  * Suspicious patterns (rsk-policy-v3) restore the monolith's fraud refusals
  * (payment-context FraudDetectionServiceAdapter.isSuspiciousPattern): a round
- * amount is decided BLOCK whatever the score, and only in a currency that has
- * pattern limits (USD today).
+ * amount or a large mobile payment is decided BLOCK whatever the score, and only
+ * in a currency that has pattern limits (USD today).
  */
 public class RiskPolicyService {
 
     public static final String UNSUPPORTED_CURRENCY = "UNSUPPORTED_CURRENCY";
     public static final String SUSPICIOUS_ROUND_AMOUNT = "SUSPICIOUS_ROUND_AMOUNT";
+    public static final String SUSPICIOUS_MOBILE_AMOUNT = "SUSPICIOUS_MOBILE_AMOUNT";
 
     /**
      * Version of these rules, stored with every decision. rsk-policy-v1 compared
@@ -38,9 +39,12 @@ public class RiskPolicyService {
     public static final Map<String, AmountThresholds> USD_THRESHOLDS = Map.of(
             "USD", new AmountThresholds(new BigDecimal("10000"), new BigDecimal("50000")));
 
-    /** The monolith's pattern figures, in USD like the thresholds: a multiple of 1000 above 10000. */
+    /**
+     * The monolith's pattern figures, in USD like the thresholds: a multiple of 1000 above 10000, and a
+     * MOBILE_PAYMENT above 5000.
+     */
     public static final Map<String, SuspiciousPatternLimits> USD_PATTERNS = Map.of(
-            "USD", new SuspiciousPatternLimits(new BigDecimal("1000"), new BigDecimal("10000")));
+            "USD", new SuspiciousPatternLimits(new BigDecimal("1000"), new BigDecimal("10000"), new BigDecimal("5000")));
 
     private final Map<String, AmountThresholds> thresholds;
     private final Map<String, SuspiciousPatternLimits> patterns;
@@ -102,6 +106,10 @@ public class RiskPolicyService {
         boolean suspicious = false;
         if (pattern != null && pattern.isSuspiciousRoundAmount(command.amount())) {
             reasons.add(SUSPICIOUS_ROUND_AMOUNT);
+            suspicious = true;
+        }
+        if (pattern != null && pattern.isSuspiciousMobileAmount(command.paymentType(), command.amount())) {
+            reasons.add(SUSPICIOUS_MOBILE_AMOUNT);
             suspicious = true;
         }
 
