@@ -6,7 +6,7 @@ Bu repository, FinTechBankX DDD/EDA dönüşümünde **svc-rsk-decisioning** ser
 | Alan | Değer |
 |---|---|
 | Organizasyon Modeli | Spotify Model (Tribe/Squad) |
-| Tribe | Risk & Compliance Tribe |
+| Tribe | Lending and Money Movement Tribe |
 | Squad | Risk and Compliance Decisioning Squad |
 | Repo Kümesi (Capability) | risk |
 | Service ID | svc-rsk-decisioning |

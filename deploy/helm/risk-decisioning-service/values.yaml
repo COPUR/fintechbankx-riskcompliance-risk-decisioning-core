@@ -29,12 +29,13 @@ resources:
   limits:
     memory: 1Gi
 
+# CPU only: the JVM keeps committed heap, so a memory target would pin the
+# deployment at maxReplicas and block scale-down.
 autoscaling:
   enabled: true
   minReplicas: 3
   maxReplicas: 12
   targetCPUUtilizationPercentage: 65
-  targetMemoryUtilizationPercentage: 80
 
 podDisruptionBudget:
   minAvailable: 2
@@ -53,6 +54,8 @@ config:
   # Outbox relay to evt.rsk.risk.*; set "false" for the first cutover step
   # (events stay in sc_rsk_decisioning.outbox_event until it is enabled).
   OUTBOX_RELAY_ENABLED: "true"
+  OIDC_AUDIENCE: svc-rsk-decisioning
+  DPOP_REQUIRED: "false"           # internal callers are bound by mesh mTLS (platform contract)
 
 # Database credential, synced from AWS Secrets Manager by External Secrets Operator.
 externalSecret:

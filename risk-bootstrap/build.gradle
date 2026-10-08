@@ -6,6 +6,11 @@
 // =================================================================
 
 apply plugin: 'org.springframework.boot'
+// Execution data feeds risk-infrastructure's coverage gate.
+apply plugin: 'jacoco'
+jacoco {
+    toolVersion = '0.8.14'
+}
 
 description = 'Risk Bootstrap - deployable svc-rsk-decisioning service'
 

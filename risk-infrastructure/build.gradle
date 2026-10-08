@@ -30,20 +30,22 @@ jacoco {
     toolVersion = '0.8.14'
 }
 
-// The JPA adapters are covered by risk-bootstrap's integration tests against
-// Postgres; this module gates the unit-testable code, outbox included.
+// The gate covers every adapter. JPA adapters and Spring wiring are exercised
+// by risk-bootstrap's PostgreSQL integration tests, so their execution data
+// counts here too: ./gradlew check needs TEST_DB_URL (CI) or Docker.
 def riskInfrastructureCoverageIncludes = [
-    'com/bank/risk/infrastructure/config/RiskConfiguration*',
-    'com/bank/risk/infrastructure/config/OutboxConfiguration*',
+    'com/bank/risk/infrastructure/config/**',
     'com/bank/risk/infrastructure/outbox/**',
+    'com/bank/risk/infrastructure/persistence/**',
+    'com/bank/risk/infrastructure/security/**',
     'com/bank/risk/infrastructure/transaction/**',
-    'com/bank/risk/infrastructure/persistence/InMemoryRiskAssessmentRepository*',
-    'com/bank/risk/infrastructure/persistence/RiskAssessmentPersistenceMapper*',
     'com/bank/risk/infrastructure/web/**'
 ]
+def bootstrapTestExecution = project(':risk-bootstrap').layout.buildDirectory.file('jacoco/test.exec')
 
 jacocoTestReport {
-    dependsOn test
+    dependsOn test, ':risk-bootstrap:test'
+    executionData.from(bootstrapTestExecution)
     reports {
         xml.required = true
         html.required = true
@@ -58,6 +60,7 @@ jacocoTestReport {
 
 jacocoTestCoverageVerification {
     dependsOn jacocoTestReport
+    executionData.from(bootstrapTestExecution)
     afterEvaluate {
         classDirectories.setFrom(files(classDirectories.files.collect { dir ->
             fileTree(dir: dir, include: riskInfrastructureCoverageIncludes)
