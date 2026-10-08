@@ -75,6 +75,35 @@ jobs:
           if not labels or any(l.get("fintechbankx.io/service-id") != "svc-rsk-decisioning" for l in labels):
               sys.exit("Deployment pod template must carry fintechbankx.io/service-id: svc-rsk-decisioning")
           ' <<<"$rendered"
+          # Platform convention (cicd-templates 335a345): app pods carry app.kubernetes.io/component=service,
+          # and every selector that picks them (Service, PDB, topology spread) includes it.
+          python3 -c '
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+          want = ("app.kubernetes.io/component", "service")
+          errors = []
+          def has(labels, where):
+              if (labels or {}).get(want[0]) != want[1]:
+                  errors.append(where)
+          kinds = {d["kind"] for d in docs}
+          for k in ("Deployment", "Service", "PodDisruptionBudget"):
+              if k not in kinds:
+                  errors.append(f"no {k} rendered")
+          for d in docs:
+              name = d["kind"] + "/" + d["metadata"]["name"]
+              if d["kind"] == "Deployment":
+                  spec = d["spec"]
+                  has(spec["template"]["metadata"].get("labels"), f"{name} pod labels")
+                  has(spec["selector"].get("matchLabels"), f"{name} selector")
+                  for i, c in enumerate(spec["template"]["spec"].get("topologySpreadConstraints", [])):
+                      has(c["labelSelector"].get("matchLabels"), f"{name} topologySpreadConstraints[{i}]")
+              elif d["kind"] == "Service":
+                  has(d["spec"].get("selector"), f"{name} selector")
+              elif d["kind"] == "PodDisruptionBudget":
+                  has(d["spec"]["selector"].get("matchLabels"), f"{name} selector")
+          if errors:
+              sys.exit("missing app.kubernetes.io/component=service: " + ", ".join(errors))
+          ' <<<"$rendered"
           # Platform contract: mesh and network policy belong to the service-mesh repo (mesh #11 allows
           # payments -> risk ingress), secrets to the one ClusterSecretStore.
           if grep -qE "kind: (PeerAuthentication|AuthorizationPolicy|NetworkPolicy|SecretStore)$" <<<"$rendered"; then
