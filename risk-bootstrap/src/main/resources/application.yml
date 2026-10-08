@@ -58,6 +58,10 @@ spring:
         delivery.timeout.ms: 30000
         request.timeout.ms: 20000
         linger.ms: 5
+        # send() blocks for metadata (e.g. a topic that does not exist yet) at most
+        # 10 s instead of the 60 s default, so one relay tick cannot hold its DB
+        # connection and the advisory lock for about 95 s.
+        max.block.ms: 10000
   security:
     oauth2:
       resourceserver:
