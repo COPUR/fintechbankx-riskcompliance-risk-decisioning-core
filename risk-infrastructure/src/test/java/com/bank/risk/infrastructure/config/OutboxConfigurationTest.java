@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 
@@ -72,6 +73,26 @@ class OutboxConfigurationTest {
 
         assertThat(relay).isNotNull();
         assertThat(relayConfiguration.relaySchedule(relay)).isNotNull();
+    }
+
+    /** The relay publishes only when switched on (chart step 4 or OUTBOX_RELAY_ENABLED=true for local runs). */
+    @Test
+    void theRelayIsAbsentUnlessItIsSwitchedOn() {
+        ApplicationContextRunner runner = new ApplicationContextRunner()
+            .withInitializer(context -> context.getBeanFactory()
+                .setConversionService(org.springframework.boot.convert.ApplicationConversionService.getSharedInstance()))
+            .withUserConfiguration(OutboxConfiguration.RelayConfiguration.class)
+            .withBean(SpringDataOutboxRepository.class, () -> outbox)
+            .withBean(KafkaTemplate.class, () -> mock(KafkaTemplate.class))
+            .withBean(PlatformTransactionManager.class, () -> mock(PlatformTransactionManager.class))
+            .withBean(Clock.class, Clock::systemUTC)
+            .withBean(io.micrometer.core.instrument.MeterRegistry.class, SimpleMeterRegistry::new);
+
+        runner.run(context -> assertThat(context).doesNotHaveBean(OutboxRelay.class));
+        runner.withPropertyValues("risk.outbox.relay.enabled=false")
+            .run(context -> assertThat(context).doesNotHaveBean(OutboxRelay.class));
+        runner.withPropertyValues("risk.outbox.relay.enabled=true")
+            .run(context -> assertThat(context).hasSingleBean(OutboxRelay.class));
     }
 
     @Test

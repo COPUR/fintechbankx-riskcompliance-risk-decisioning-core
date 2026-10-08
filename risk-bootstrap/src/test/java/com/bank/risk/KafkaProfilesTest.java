@@ -99,6 +99,12 @@ class KafkaProfilesTest {
         assertThat(base.getProperty("management.metrics.tags.squad")).hasToString("${METRICS_SQUAD:risk}");
     }
 
+    @Test
+    void theOutboxRelayIsOffUnlessTheEnvironmentTurnsItOn() {
+        assertThat(documents().getFirst().getProperty("risk.outbox.relay.enabled"))
+            .hasToString("${OUTBOX_RELAY_ENABLED:false}");
+    }
+
     private static KafkaProperties bind(String profile) {
         StandardEnvironment environment = new StandardEnvironment();
         MutablePropertySources sources = environment.getPropertySources();
