@@ -51,7 +51,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -302,9 +302,12 @@ class RiskOutboxIT {
     }
 
     /**
-     * Two replicas relay at the same moment: the advisory lock lets one of them
-     * publish and the other skip, so every row is sent exactly once. Without
-     * the lock both read the same unpublished rows and send them twice.
+     * Two replicas relay at the same moment, deterministically: the winner's
+     * first send blocks until the loser has called tryRelayLock, so the loser
+     * always asks for the lock while the winner's transaction (and lock) is
+     * open. With the advisory lock the loser gets false and sends nothing;
+     * without it (query replaced by "select true") the loser reads the same
+     * unpublished rows and every event is sent twice.
      */
     @Test
     @SuppressWarnings("unchecked")
@@ -313,34 +316,64 @@ class RiskOutboxIT {
             assess("PAY-CONC-" + i, "10.00").andExpect(status().isCreated());
         }
         Map<String, Integer> sends = new java.util.concurrent.ConcurrentHashMap<>();
+        CountDownLatch winnerSending = new CountDownLatch(1);
+        CountDownLatch loserAskedForTheLock = new CountDownLatch(1);
+        Thread[] winnerThread = new Thread[1];
         when(kafka.send(any(ProducerRecord.class))).thenAnswer(call -> {
             ProducerRecord<String, String> record = call.getArgument(0);
             sends.merge(new String(record.headers().lastHeader("eventId").value(), StandardCharsets.UTF_8), 1, Integer::sum);
-            Thread.sleep(100); // keep each relay's transaction open long enough to overlap
+            if (Thread.currentThread() == winnerThread[0] && winnerSending.getCount() > 0) {
+                winnerSending.countDown();
+                assertThat(loserAskedForTheLock.await(20, TimeUnit.SECONDS))
+                    .as("the loser asked for the lock while the winner's transaction was open").isTrue();
+            }
             return CompletableFuture.completedFuture((SendResult<String, String>) null);
         });
-        CyclicBarrier start = new CyclicBarrier(2);
+        OutboxRelay winner = relayOver(outbox);
+        OutboxRelay loser = relayOver(afterTryRelayLock(outbox, loserAskedForTheLock::countDown));
         ExecutorService replicas = Executors.newFixedThreadPool(2);
         try {
-            List<Future<Integer>> runs = new java.util.ArrayList<>();
-            for (int replica = 0; replica < 2; replica++) {
-                OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
-                    Clock.systemUTC(), 10, Duration.ofSeconds(5), Duration.ofDays(7),
-            Duration.ofSeconds(1), Duration.ofMinutes(5), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
-                runs.add(replicas.submit(() -> {
-                    start.await(10, TimeUnit.SECONDS);
-                    return relay.relayOnce();
-                }));
-            }
-            int published = runs.get(0).get(30, TimeUnit.SECONDS) + runs.get(1).get(30, TimeUnit.SECONDS);
+            Future<Integer> first = replicas.submit(() -> {
+                winnerThread[0] = Thread.currentThread();
+                return winner.relayOnce();
+            });
+            assertThat(winnerSending.await(20, TimeUnit.SECONDS)).as("the winner holds the lock and is sending").isTrue();
+            Future<Integer> second = replicas.submit(loser::relayOnce);
 
-            assertThat(sends).hasSize(5);
+            int loserPublished = second.get(30, TimeUnit.SECONDS);
+            int winnerPublished = first.get(30, TimeUnit.SECONDS);
+
             assertThat(sends.values()).as("each event sent exactly once").containsOnly(1);
-            assertThat(published).isEqualTo(5);
+            assertThat(sends).hasSize(5);
+            assertThat(loserPublished).as("the loser did not get the lock").isZero();
+            assertThat(winnerPublished).isEqualTo(5);
             assertThat(outbox.countByPublishedAtIsNull()).isZero();
         } finally {
             replicas.shutdownNow();
         }
+    }
+
+    private OutboxRelay relayOver(SpringDataOutboxRepository repository) {
+        return new OutboxRelay(repository, kafka, new TransactionTemplate(transactionManager),
+            Clock.systemUTC(), 10, Duration.ofSeconds(30), Duration.ofDays(7),
+            Duration.ofSeconds(1), Duration.ofMinutes(5), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+    }
+
+    /** The real repository, with a hook that runs after each tryRelayLock call returns. */
+    private static SpringDataOutboxRepository afterTryRelayLock(SpringDataOutboxRepository real, Runnable hook) {
+        return (SpringDataOutboxRepository) java.lang.reflect.Proxy.newProxyInstance(
+            SpringDataOutboxRepository.class.getClassLoader(), new Class<?>[] {SpringDataOutboxRepository.class},
+            (proxy, method, args) -> {
+                try {
+                    return method.invoke(real, args);
+                } catch (java.lang.reflect.InvocationTargetException e) {
+                    throw e.getCause();
+                } finally {
+                    if (method.getName().equals("tryRelayLock")) {
+                        hook.run();
+                    }
+                }
+            });
     }
 
     private void awaitLockWait() throws InterruptedException {
