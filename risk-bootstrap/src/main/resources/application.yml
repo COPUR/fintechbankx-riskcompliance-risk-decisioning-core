@@ -118,9 +118,11 @@ risk:
       # Longer than delivery.timeout.ms, so the relay never gives up on a send
       # that Kafka is still retrying (which would publish it twice).
       send-timeout: PT35S
-      # A row that fails this many times (or once with a non-retryable error) is
-      # parked so it cannot stall later events; see the runbook for the replay.
-      max-attempts: ${OUTBOX_RELAY_MAX_ATTEMPTS:10}
+      # No attempt-count cap: retryable failures (Kafka RetriableException,
+      # timeouts) stop the batch and are retried, and park a row only after it
+      # has been failing continuously for longer than this (from first_failed_at).
+      # Non-retriable failures park at once. Alert on outbox_oldest_pending_age_seconds.
+      retryable-park-after: ${OUTBOX_RELAY_RETRYABLE_PARK_AFTER:PT24H}
 
 logging:
   pattern:

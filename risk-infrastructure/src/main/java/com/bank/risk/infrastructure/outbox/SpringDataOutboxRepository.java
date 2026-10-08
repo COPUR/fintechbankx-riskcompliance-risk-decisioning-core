@@ -32,6 +32,13 @@ public interface SpringDataOutboxRepository extends JpaRepository<OutboxEventJpa
 
     long countByPublishedAtIsNull();
 
+    /** Age in seconds of the oldest row waiting for the relay (not published, not parked); 0 when none waits. */
+    @Query(value = """
+        select coalesce(extract(epoch from (now() - min(created_at))), 0)::float8 from outbox_event
+        where published_at is null and parked_at is null
+        """, nativeQuery = true)
+    double oldestPendingAgeSeconds();
+
     /** Rows waiting for the relay (not published, not parked). */
     long countByPublishedAtIsNullAndParkedAtIsNull();
 

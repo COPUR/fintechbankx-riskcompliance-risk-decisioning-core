@@ -58,6 +58,10 @@ public class OutboxEventJpaEntity {
     @Column(name = "parked_at")
     private Instant parkedAt;
 
+    /** First failed send; the retryable-failure ceiling is measured from here. */
+    @Column(name = "first_failed_at")
+    private Instant firstFailedAt;
+
     @Column(name = "attempts", nullable = false)
     private int attempts;
 
@@ -94,6 +98,7 @@ public class OutboxEventJpaEntity {
     public String getTraceparent() { return traceparent; }
     public Instant getPublishedAt() { return publishedAt; }
     public Instant getParkedAt() { return parkedAt; }
+    public Instant getFirstFailedAt() { return firstFailedAt; }
     public int getAttempts() { return attempts; }
     public String getLastError() { return lastError; }
 
@@ -104,6 +109,13 @@ public class OutboxEventJpaEntity {
     }
 
     void markFailed(String error) {
+        markFailed(error, null);
+    }
+
+    void markFailed(String error, Instant at) {
+        if (firstFailedAt == null) {
+            this.firstFailedAt = at;
+        }
         this.attempts++;
         this.lastError = error == null ? null : error.substring(0, Math.min(error.length(), 512));
     }

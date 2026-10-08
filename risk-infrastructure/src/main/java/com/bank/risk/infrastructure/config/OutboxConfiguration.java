@@ -24,6 +24,7 @@ public class OutboxConfiguration {
 
     static final String PENDING_GAUGE = "outbox.pending.events";
     static final String PARKED_GAUGE = "outbox.parked.events";
+    static final String OLDEST_PENDING_AGE_GAUGE = "outbox.oldest.pending.age.seconds";
 
     @Bean
     RiskEventEnvelopeFactory riskEventEnvelopeFactory(ObjectMapper objectMapper) {
@@ -44,6 +45,22 @@ public class OutboxConfiguration {
     Gauge riskOutboxPendingGauge(MeterRegistry registry, SpringDataOutboxRepository outbox) {
         return Gauge.builder(PENDING_GAUGE, outbox, SpringDataOutboxRepository::countByPublishedAtIsNullAndParkedAtIsNull)
             .description("Risk events written to the outbox and waiting for the relay (parked rows excluded)")
+            .tag("service", RiskEventEnvelopeFactory.PRODUCER)
+            .register(registry);
+    }
+
+    /**
+     * Age of the oldest event waiting for the relay (Prometheus
+     * outbox_oldest_pending_age_seconds). The alert for a stalled relay:
+     * retryable failures (broker or egress outage) stop the batch without
+     * parking for up to risk.outbox.relay.retryable-park-after, so this age,
+     * not the parked count, shows the outage.
+     */
+    @Bean
+    Gauge riskOutboxOldestPendingAgeGauge(MeterRegistry registry, SpringDataOutboxRepository outbox) {
+        return Gauge.builder(OLDEST_PENDING_AGE_GAUGE, outbox, SpringDataOutboxRepository::oldestPendingAgeSeconds)
+            .description("Age in seconds of the oldest risk event waiting for the outbox relay")
+            .baseUnit("seconds")
             .tag("service", RiskEventEnvelopeFactory.PRODUCER)
             .register(registry);
     }
@@ -79,9 +96,9 @@ public class OutboxConfiguration {
                                 @Value("${risk.outbox.relay.batch-size:100}") int batchSize,
                                 @Value("${risk.outbox.relay.send-timeout:PT35S}") Duration sendTimeout,
                                 @Value("${risk.outbox.retention:P7D}") Duration retention,
-                                @Value("${risk.outbox.relay.max-attempts:10}") int maxAttempts) {
+                                @Value("${risk.outbox.relay.retryable-park-after:PT24H}") Duration retryableParkAfter) {
             return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), clock, batchSize,
-                sendTimeout, retention, maxAttempts);
+                sendTimeout, retention, retryableParkAfter);
         }
 
         @Bean
