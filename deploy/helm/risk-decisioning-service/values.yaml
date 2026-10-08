@@ -68,7 +68,8 @@ externalSecret:
   secretStoreRef:
     kind: ClusterSecretStore
     name: aws-secrets-manager
-  # Secrets Manager secret from deploy/terraform output app_db_secret_name.
+  # Secrets Manager secret from deploy/terraform output app_db_secret_name:
+  # <env>/<service account>/db-app, the only path the platform ESO role may read.
   remoteSecretName: ""
   refreshInterval: 1h
 
