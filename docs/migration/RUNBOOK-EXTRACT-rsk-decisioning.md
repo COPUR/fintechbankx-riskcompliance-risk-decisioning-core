@@ -21,7 +21,7 @@ Extraction of risk decisioning from `enterprise-loan-management-system` into
 | `customers`, `loans`, `loan_applications` | `svc-cus-profile-kyc`, `svc-ln-loan-lifecycle` | never copied here |
 | Fraud ML and vendor clients (`infrastructure/fraud` in the payments repo) | belongs here, not ported yet | payments screens with its rule-based adapter until this service exposes a model-backed score |
 
-Flyway migrations: `risk-infrastructure/src/main/resources/db/migration/V1__create_risk_assessment.sql`, `V2__create_legacy_credit_risk_assessment.sql`, `V3__create_outbox.sql`, `V4__park_undeliverable_outbox_events.sql`, `V6__outbox_first_failed_at.sql`. The service never reads monolith tables and the monolith must not read `sc_rsk_decisioning`.
+Flyway migrations: `risk-infrastructure/src/main/resources/db/migration/V1__create_risk_assessment.sql`, `V2__create_legacy_credit_risk_assessment.sql`, `V3__create_outbox.sql`, `V4__park_undeliverable_outbox_events.sql`, `V5__record_risk_assessment_attestation.sql`, `V6__outbox_first_failed_at.sql`, `V7__record_risk_assessment_rule_set_version.sql`. V5 backfills `attestation_source = 'CALLER_ATTESTED'` on existing rows (their `attested_by` stays NULL) and V7 backfills `rule_set_version = 'rsk-policy-v1'`; both then drop the column default, so every new row must state them (`rule_set_version` is NOT NULL). The service never reads monolith tables and the monolith must not read `sc_rsk_decisioning`.
 
 ## 2. Backfill and reconciliation
 
@@ -64,13 +64,17 @@ The backfill is independent of the other contexts' backfills and can be re-run u
 An outage or a credential problem therefore only delays events: fix the cause (the relay's WARN log names the
 exception) and the relay catches up by itself. `first_failed_at` (V6) is no longer written.
 
-Alerts (owning squad: risk, the Risk and Compliance Decisioning Squad; every meter carries the common tags
-`app="risk-decisioning-service"` and `squad="risk"`):
-- Stalled relay, outage or broken credential, page after 15 minutes:
-  `outbox_oldest_pending_age_seconds{app="risk-decisioning-service", squad="risk"} > 900`
-  (age of the oldest row waiting for the relay, from `created_at`). `outbox_send_failures_total{exception=...}`
-  shows why. The alert rule lives in the platform observability repository (one rule per service, built on these
-  names); this chart ships no PrometheusRule.
+Alerts (owning squad: `risk`, the Risk and Compliance Decisioning Squad). **Proposed** to the platform observability
+repository (fintechbankx-platform-observability-sre-operations); no rule on these series exists there yet, and this
+chart ships no PrometheusRule. The platform's outbox rules key on the `service_id` label, taken from the pod label
+`fintechbankx.io/service-id` (`svc-rsk-decisioning`, set by this chart and asserted in the deployability job):
+- Stalled relay, outage or broken credential:
+  `max(outbox_oldest_pending_age_seconds{service_id="svc-rsk-decisioning"}) > 900` for 5m, severity critical,
+  squad risk. The age is measured from `created_at` of the oldest row waiting for the relay.
+- Companion, why it is stalled: `increase(outbox_send_failures_total{service_id="svc-rsk-decisioning"}[10m]) > 0`
+  (tag `exception` names the cause).
+- Dependency: both series reach the managed Prometheus only once the AMP remote-write keep regex is widened from
+  `.*outbox_pending.*` to `outbox_.*` (platform owns that change).
 - `outbox_parked_events{service="svc-rsk-decisioning"}`: alert on any value above zero, because consumers are
   missing those decisions until they are replayed.
 
