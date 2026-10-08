@@ -21,7 +21,7 @@ paths:
         its decision.
       security:
         - bearerAuth: []
-          dpopAuth: []
+        - dpopAuth: []
       parameters:
         - $ref: '#/components/parameters/Authorization'
         - $ref: '#/components/parameters/DPoP'
@@ -78,7 +78,7 @@ paths:
       operationId: findRiskAssessment
       security:
         - bearerAuth: []
-          dpopAuth: []
+        - dpopAuth: []
       parameters:
         - $ref: '#/components/parameters/Authorization'
         - $ref: '#/components/parameters/DPoP'
@@ -130,7 +130,14 @@ components:
     DPoP:
       name: DPoP
       in: header
-      required: true
+      required: false
+      description: |-
+        DPoP proof (RFC 9449). Optional here: per the platform contract
+        (addendum 2026-10-08) DPoP binding applies only to open-finance TPP
+        clients. This service is called with internal client-credentials and
+        staff tokens, which are not DPoP-bound, so it does not verify DPoP; a
+        DPoP header sent anyway is ignored. Audience and the azp allow-list are
+        enforced by the service.
       schema:
         type: string
     InteractionId:

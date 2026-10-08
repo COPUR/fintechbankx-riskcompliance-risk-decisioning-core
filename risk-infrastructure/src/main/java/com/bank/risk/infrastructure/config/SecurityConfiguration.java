@@ -27,15 +27,21 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Stateless OAuth2 resource server. Tokens come from the platform Keycloak
- * realm and must be issued by it AND name this service in their audience
- * (a Keycloak audience mapper on each calling client), so a token minted for
- * another client is refused here. Realm roles become ROLE_* authorities for
- * the @PreAuthorize rules on RiskController.
+ * Stateless OAuth2 resource server. Enforced here: the token is issued by the
+ * platform Keycloak realm, names this service in its audience (a Keycloak
+ * audience mapper on each calling client), so a token minted for another
+ * client is refused, and SERVICE-role callers must have their client id (azp)
+ * on the SERVICE_CALLERS allow-list ({@link ServiceCallerPolicy}). Realm roles
+ * become ROLE_* authorities for the @PreAuthorize rules on RiskController.
  *
- * DPoP proof-of-possession is enforced at the edge gateway for external
- * clients; calls inside the mesh are authenticated by STRICT mTLS (see the
- * PeerAuthentication and AuthorizationPolicy in the Helm chart).
+ * Mesh policy is not in this repository: the service-mesh repository owns the
+ * STRICT mTLS PeerAuthentication and the per-caller ALLOW AuthorizationPolicy
+ * rules for namespace risk.
+ *
+ * DPoP is not verified here. Per the platform contract (addendum 2026-10-08)
+ * DPoP binding applies only to open-finance TPP clients; this service is
+ * called with internal client-credentials and staff tokens, which are not
+ * DPoP-bound. The OpenAPI DPoP header is therefore optional.
  *
  * Actuator endpoints are served on the management port, which the chart's
  * NetworkPolicy opens to the observability namespace only.
