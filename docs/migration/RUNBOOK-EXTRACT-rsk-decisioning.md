@@ -50,45 +50,54 @@ The backfill is independent of the other contexts' backfills and can be re-run u
 
 ## 4. Parked outbox events
 
-`OutboxRelay` parks a row (sets `parked_at`, keeps the reason in `last_error`) at once only when the failure is
-specific to that record: `RecordTooLargeException`, `SerializationException` or `InvalidTopicException`. The batch
-then continues with the next row.
+`OutboxRelay` follows ADR-021 decision 4 (fintechbankx-governance-architecture-enablement-adr-runbooks):
 
-Every other failure stops the batch and the row is retried on the next run, however many times it fails: retriable
-Kafka errors and timeouts (broker, DNS or mesh-egress outages), authentication and authorization errors
-(`SaslAuthenticationException` from a broken IRSA/IAM setup, `AuthenticationException`, `AuthorizationException`,
-`TopicAuthorizationException` from a missing topic grant), and anything unclassified (a generic `KafkaException`,
-any other exception). These affect every row alike, so parking them would only move the whole queue into the parked
-state. Such a row is parked only when it has been failing continuously for longer than
-`risk.outbox.relay.retryable-park-after` (`OUTBOX_RELAY_RETRYABLE_PARK_AFTER`, default `PT24H`), measured from its
-`first_failed_at` (V6). There is no attempt-count cap. An outage or a credential problem therefore only delays
-events; fix the cause (the `last_error` of the head row names it) and the relay catches up by itself.
+- Payload errors (`RecordTooLargeException`, `SerializationException`, `InvalidTopicException`): park the row
+  (`parked_at` set, reason in `last_error`, alert raised through `outbox_parked_events`) and continue with the
+  next row.
+- Everything else, including retriable, authorization and SASL/IAM failures and any unclassified exception: stop
+  the batch without marking the row or anything after it, retry with backoff and alert. The relay never skips or
+  parks a row for such an error, however long it lasts. Backoff after a stopped batch starts at
+  `risk.outbox.relay.interval` (1 s) and doubles per stopped run up to `risk.outbox.relay.max-backoff`
+  (`OUTBOX_RELAY_MAX_BACKOFF`, default `PT5M`); any run that does not stop resets it.
+
+An outage or a credential problem therefore only delays events: fix the cause (the relay's WARN log names the
+exception) and the relay catches up by itself. `first_failed_at` (V6) is no longer written.
 
 Alerts:
-- `outbox_oldest_pending_age_seconds{service="svc-rsk-decisioning"}`: age of the oldest row waiting for the relay.
-  This is the alert for a stalled relay or an outage (suggested: warn above 300 s, page above 1800 s).
+- `outbox_oldest_pending_age_seconds`: age of the oldest row waiting for the relay; the signal for a stalled relay,
+  an outage or a broken credential.
 - `outbox_parked_events{service="svc-rsk-decisioning"}`: alert on any value above zero, because consumers are
   missing those decisions until they are replayed.
 
-Replay, after fixing the cause (topic created, IAM policy fixed, payload size limit raised):
+Manual park (operator only, change-logged). If one row is stuck on a non-payload error that only it triggers and
+the owning squad decides to let later events through, park it by hand with the reason; the relay then skips it:
+
+```sql
+UPDATE sc_rsk_decisioning.outbox_event
+SET parked_at = now(), last_error = left('manual: <reason, ticket>', 512)
+WHERE event_id = '<event id>' AND published_at IS NULL AND parked_at IS NULL;
+```
+
+Replay, after fixing the cause (topic created, IAM policy fixed, payload size limit raised), for rows parked by the
+relay or by hand:
 
 ```sql
 -- Inspect
-SELECT event_id, created_seq, topic, attempts, first_failed_at, last_error, parked_at
+SELECT event_id, created_seq, topic, attempts, last_error, parked_at
 FROM sc_rsk_decisioning.outbox_event
 WHERE published_at IS NULL AND parked_at IS NOT NULL
 ORDER BY created_seq;
 
--- Un-park one row (or drop the event_id filter to replay all, in created_seq order);
--- first_failed_at must be reset, otherwise the 24 h ceiling parks the row again on its first retryable failure.
+-- Un-park one row (or drop the event_id filter to replay all, in created_seq order).
 UPDATE sc_rsk_decisioning.outbox_event
 SET parked_at = NULL, first_failed_at = NULL, attempts = 0, last_error = NULL
 WHERE event_id = '<event id>' AND published_at IS NULL AND parked_at IS NOT NULL;
 ```
 
-The relay publishes un-parked rows on its next run (`risk.outbox.relay.interval`, 1 s). Consumers de-duplicate on
-`eventId`, so replaying a row that Kafka did in fact accept is safe. Record each replay (event ids, cause, operator)
-in the change log of the environment.
+The relay publishes un-parked rows on its next run. Consumers de-duplicate on `eventId`, so replaying a row that
+Kafka did in fact accept is safe. Record each manual park and replay (event ids, cause, operator) in the change log
+of the environment.
 
 ## 5. Acceptance checklist
 

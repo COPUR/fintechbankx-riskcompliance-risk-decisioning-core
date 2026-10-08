@@ -52,9 +52,8 @@ public class OutboxConfiguration {
     /**
      * Age of the oldest event waiting for the relay (Prometheus
      * outbox_oldest_pending_age_seconds). The alert for a stalled relay:
-     * retryable failures (broker or egress outage) stop the batch without
-     * parking for up to risk.outbox.relay.retryable-park-after, so this age,
-     * not the parked count, shows the outage.
+     * non-payload failures (outage, auth) stop the batch and are retried with
+     * backoff, never parked (ADR-021 decision 4), so this age shows them.
      */
     @Bean
     Gauge riskOutboxOldestPendingAgeGauge(MeterRegistry registry, SpringDataOutboxRepository outbox) {
@@ -96,12 +95,11 @@ public class OutboxConfiguration {
                                 @Value("${risk.outbox.relay.batch-size:100}") int batchSize,
                                 @Value("${risk.outbox.relay.send-timeout:PT35S}") Duration sendTimeout,
                                 @Value("${risk.outbox.retention:P7D}") Duration retention,
-                                @Value("${risk.outbox.relay.retryable-park-after:PT24H}") Duration retryableParkAfter,
                                 @Value("${risk.outbox.relay.interval:PT1S}") Duration backoffBase,
                                 @Value("${risk.outbox.relay.max-backoff:PT5M}") Duration backoffCap,
                                 MeterRegistry registry) {
             return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), clock, batchSize,
-                sendTimeout, retention, retryableParkAfter, backoffBase, backoffCap, registry);
+                sendTimeout, retention, backoffBase, backoffCap, registry);
         }
 
         @Bean

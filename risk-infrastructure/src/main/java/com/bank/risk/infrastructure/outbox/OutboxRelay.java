@@ -28,22 +28,19 @@ import java.util.concurrent.TimeUnit;
  * scale out without reordering events. Consumers de-duplicate on eventId,
  * which makes the at-least-once delivery safe.
  *
- * A failed send is handled by what failed:
+ * A failed send is handled by what failed (ADR-021 decision 4):
  * <ul>
- *   <li>payload-specific (RecordTooLarge, Serialization, InvalidTopic): this
- *   row can never be sent, so it is parked at once (parked_at set, reason in
- *   last_error) and the batch continues with the next row;</li>
- *   <li>everything else: retriable Kafka errors and timeouts, authentication
- *   and authorization errors (SASL/IAM, topic ACLs), and anything unclassified.
- *   These affect every row alike, so the batch stops and the row is retried on
- *   the next run; later events cannot overtake it, and an outage or a broken
- *   credential only delays events. Such a row is parked only once it has been
- *   failing continuously for longer than {@code retryableParkAfter} (default
- *   24 h, from first_failed_at).</li>
+ *   <li>payload errors (RecordTooLarge, Serialization, InvalidTopic): this row
+ *   can never be sent, so it is parked (parked_at set, reason in last_error,
+ *   alert on outbox.parked.events) and the batch continues with the next row;</li>
+ *   <li>everything else, including retriable, authorization and SASL/IAM
+ *   failures and any unclassified exception: the batch stops without marking
+ *   the row or anything after it, and the relay retries with exponential
+ *   backoff. Such a row is never skipped or parked; the failure shows in
+ *   outbox.publish.failures and outbox.oldest.pending.age.seconds.</li>
  * </ul>
- * Parked rows are skipped until replayed by hand (runbook "Parked outbox
- * events") and counted by the outbox.parked.events gauge; a stalled relay
- * shows in outbox.oldest.pending.age.seconds.
+ * An operator can park a row stuck on a non-payload error by hand (runbook
+ * "Parked outbox events"); parked rows are skipped until replayed.
  *
  * Each risk assessment raises exactly one event, so parking a row never puts
  * two events of one aggregate out of order.
@@ -63,7 +60,6 @@ public class OutboxRelay {
     private final int batchSize;
     private final Duration sendTimeout;
     private final Duration retention;
-    private final Duration retryableParkAfter;
     private final Duration backoffBase;
     private final Duration backoffCap;
     private final MeterRegistry registry;
@@ -78,14 +74,11 @@ public class OutboxRelay {
      */
     public OutboxRelay(SpringDataOutboxRepository outbox, KafkaTemplate<String, String> kafka,
                        TransactionTemplate transactions, Clock clock, int batchSize,
-                       Duration sendTimeout, Duration retention, Duration retryableParkAfter,
+                       Duration sendTimeout, Duration retention,
                        Duration backoffBase, Duration backoffCap, MeterRegistry registry) {
         if (backoffBase == null || backoffBase.isZero() || backoffBase.isNegative()
                 || backoffCap == null || backoffCap.compareTo(backoffBase) < 0) {
             throw new IllegalArgumentException("relay backoff must be positive, with max-backoff not below the base");
-        }
-        if (retryableParkAfter == null || retryableParkAfter.isZero() || retryableParkAfter.isNegative()) {
-            throw new IllegalArgumentException("risk.outbox.relay.retryable-park-after must be positive");
         }
         this.outbox = outbox;
         this.kafka = kafka;
@@ -94,7 +87,6 @@ public class OutboxRelay {
         this.batchSize = batchSize;
         this.sendTimeout = sendTimeout;
         this.retention = retention;
-        this.retryableParkAfter = retryableParkAfter;
         this.backoffBase = backoffBase;
         this.backoffCap = backoffCap;
         this.registry = registry;
@@ -122,19 +114,19 @@ public class OutboxRelay {
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     countFailure(e);
-                    row.markFailed("interrupted");
                     stopped[0] = true;
                     break;
                 } catch (Exception e) {
-                    Instant now = clock.instant();
                     countFailure(e);
-                    row.markFailed(describe(e), now);
-                    if (!isPayloadSpecific(e) && !now.isAfter(row.getFirstFailedAt().plus(retryableParkAfter))) {
-                        log.warn("Outbox relay could not publish event {} to {} (attempt {}, failing since {}); will retry",
-                            row.getEventId(), row.getTopic(), row.getAttempts(), row.getFirstFailedAt(), e);
+                    if (!isPayloadSpecific(e)) {
+                        // Not this record's fault: stop without marking the row; retried after backoff.
+                        log.warn("Outbox relay could not publish event {} to {}: {}; batch stopped, will retry",
+                            row.getEventId(), row.getTopic(), describe(e), e);
                         stopped[0] = true;
                         break;
                     }
+                    Instant now = clock.instant();
+                    row.markFailed(describe(e));
                     row.park(now);
                     log.error("Outbox relay parked event {} for {} after {} attempt(s): {}; replay it by hand",
                         row.getEventId(), row.getTopic(), row.getAttempts(), row.getLastError(), e);

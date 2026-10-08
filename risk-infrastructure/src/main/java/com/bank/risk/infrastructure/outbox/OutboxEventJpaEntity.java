@@ -58,7 +58,7 @@ public class OutboxEventJpaEntity {
     @Column(name = "parked_at")
     private Instant parkedAt;
 
-    /** First failed send; the retryable-failure ceiling is measured from here. */
+    /** V6 column, no longer written: non-payload failures never mark or park a row (ADR-021 decision 4). */
     @Column(name = "first_failed_at")
     private Instant firstFailedAt;
 
@@ -109,13 +109,6 @@ public class OutboxEventJpaEntity {
     }
 
     void markFailed(String error) {
-        markFailed(error, null);
-    }
-
-    void markFailed(String error, Instant at) {
-        if (firstFailedAt == null) {
-            this.firstFailedAt = at;
-        }
         this.attempts++;
         this.lastError = error == null ? null : error.substring(0, Math.min(error.length(), 512));
     }
