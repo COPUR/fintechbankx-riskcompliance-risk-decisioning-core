@@ -32,8 +32,15 @@ stated. A decision log that hides this would overstate what risk checked.
    currency) are stored with the decision. A retry must repeat every fact to get
    the stored decision; anything else is `409 TRANSACTION_ALREADY_ASSESSED`. The
    caller and the rule-set version are recorded, not compared on retry.
-4. The attestation is not yet published on `evt.rsk.risk.assessed.v1`; readers
-   get it through the risk API.
+4. Amount thresholds are per currency, and only USD is configured
+   (10000 / 50000, the values the policy always used; the monolith evidence
+   says the home currency is USD). An amount in any other currency is never
+   decided as low risk: the amount rules are skipped, reason
+   `UNSUPPORTED_CURRENCY` is added and the decision is at least `REVIEW`. The
+   country and velocity rules still apply. Reversible: adding a currency's
+   thresholds is a policy change with a new `rule_set_version`.
+5. `evt.rsk.risk.assessed.v1` carries `attestationSource` (optional, contract
+   1.1.0). Who attested (`attestedBy`) stays behind the risk API.
 
 ## Consequences
 
@@ -55,7 +62,6 @@ stated. A decision log that hides this would overstate what risk checked.
 - Amount thresholds exist for USD only; other currencies get REVIEW with
   `UNSUPPORTED_CURRENCY`. Configure thresholds for each currency the bank
   settles in once the home-currency decision is made.
-- Decide whether to add `attestationSource` to the Assessed event (additive).
 
 ## Reversibility
 

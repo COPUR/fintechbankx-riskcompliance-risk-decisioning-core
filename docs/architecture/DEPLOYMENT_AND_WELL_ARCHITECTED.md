@@ -39,7 +39,8 @@ relay's connection to MSK (port 9098) is dropped until the platform allows it. B
 
 1. The mesh contract lists `msk` for `risk-decisioning-service` (allow-egress-msk generated for namespace `risk`);
    owned by fintechbankx-platform-mesh-security-service-mesh.
-2. Topic `evt.rsk.risk.assessed.v1` exists on the platform cluster.
+2. asyncapi-catalog #11 (the catalog entry for this contract) is merged, and topic `evt.rsk.risk.assessed.v1`
+   exists on the platform cluster.
 3. `msk_cluster_arn` is set in Terraform, so the IRSA role can publish to `evt.rsk.risk.*`.
 
 ## Known gaps
