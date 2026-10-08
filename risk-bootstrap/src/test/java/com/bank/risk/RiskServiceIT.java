@@ -30,7 +30,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * sc_rsk_decisioning, Hibernate validates the entity against it, and a
  * payment service assesses transactions over HTTP.
  */
-@SpringBootTest
+@SpringBootTest(properties = "risk.outbox.relay.enabled=false")
 @AutoConfigureMockMvc
 class RiskServiceIT {
 
@@ -49,6 +49,7 @@ class RiskServiceIT {
 
     @BeforeEach
     void cleanTables() {
+        jdbc.update("delete from sc_rsk_decisioning.outbox_event");
         jdbc.update("delete from sc_rsk_decisioning.risk_assessment");
     }
 
@@ -60,7 +61,7 @@ class RiskServiceIT {
             order by table_name
             """, String.class);
 
-        assertThat(tables).containsExactly("legacy_credit_risk_assessment", "risk_assessment");
+        assertThat(tables).containsExactly("legacy_credit_risk_assessment", "outbox_event", "risk_assessment");
     }
 
     @Test

@@ -1,12 +1,15 @@
 package com.bank.risk.application;
 
+import com.bank.risk.domain.RiskAssessedEvent;
 import com.bank.risk.domain.RiskAssessment;
 import com.bank.risk.domain.RiskDecision;
 import com.bank.risk.domain.command.RiskEvaluationCommand;
 import com.bank.risk.domain.port.out.RiskAssessmentRepository;
+import com.bank.risk.domain.port.out.RiskEventPublisher;
 import com.bank.risk.domain.service.RiskPolicyService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -28,6 +31,9 @@ class RiskAssessmentServiceTest {
     @Mock
     private RiskAssessmentRepository repository;
 
+    @Mock
+    private RiskEventPublisher eventPublisher;
+
     @InjectMocks
     private RiskAssessmentService service;
 
@@ -43,6 +49,7 @@ class RiskAssessmentServiceTest {
         assertThat(result).isEqualTo(existing);
         verify(policyService, never()).evaluate(any());
         verify(repository, never()).save(any());
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test
@@ -59,6 +66,37 @@ class RiskAssessmentServiceTest {
         assertThat(result).isEqualTo(assessed);
         verify(policyService).evaluate(command);
         verify(repository).save(assessed);
+    }
+
+    @Test
+    void aNewAssessmentIsSavedThenItsAssessedEventPublishedOnce() {
+        RiskEvaluationCommand command = new RiskEvaluationCommand("TX-5", new BigDecimal("12000.00"), "AED", false, 45);
+        RiskAssessment assessed = RiskAssessment.create("TX-5", new BigDecimal("12000.00"), "AED", 45,
+                RiskDecision.ALLOW, List.of("HIGH_AMOUNT", "MEDIUM_VELOCITY"));
+        RiskAssessedEvent raised = (RiskAssessedEvent) assessed.getDomainEvents().getFirst();
+        when(repository.findByTransactionId("TX-5")).thenReturn(Optional.empty());
+        when(policyService.evaluate(command)).thenReturn(assessed);
+        when(repository.save(assessed)).thenReturn(assessed);
+
+        service.assess(command);
+
+        InOrder order = inOrder(repository, eventPublisher);
+        order.verify(repository).save(assessed);
+        order.verify(eventPublisher).publish(List.of(raised));
+        verifyNoMoreInteractions(eventPublisher);
+        assertThat(assessed.getDomainEvents()).isEmpty();
+    }
+
+    @Test
+    void nothingIsPublishedWhenTheSaveFails() {
+        RiskEvaluationCommand command = new RiskEvaluationCommand("TX-6", new BigDecimal("50.00"), "AED", false, 0);
+        RiskAssessment assessed = RiskAssessment.create("TX-6", new BigDecimal("50.00"), "AED", 0, RiskDecision.ALLOW, List.of());
+        when(repository.findByTransactionId("TX-6")).thenReturn(Optional.empty());
+        when(policyService.evaluate(command)).thenReturn(assessed);
+        when(repository.save(assessed)).thenThrow(new IllegalStateException("unique transaction_id"));
+
+        assertThatThrownBy(() -> service.assess(command)).isInstanceOf(IllegalStateException.class);
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test
@@ -79,5 +117,6 @@ class RiskAssessmentServiceTest {
                 .isInstanceOf(TransactionAlreadyAssessedException.class)
                 .hasMessageContaining("TX-9");
         verify(repository, never()).save(any());
+        verifyNoInteractions(eventPublisher);
     }
 }

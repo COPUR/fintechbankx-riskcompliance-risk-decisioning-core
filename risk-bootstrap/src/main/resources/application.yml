@@ -35,6 +35,18 @@ spring:
     default-schema: sc_rsk_decisioning
     create-schemas: true
     locations: classpath:db/migration
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    security:
+      protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+        delivery.timeout.ms: 30000
   security:
     oauth2:
       resourceserver:
@@ -73,6 +85,31 @@ management:
     key-values:
       service: svc-rsk-decisioning
 
+risk:
+  outbox:
+    retention: P7D
+    relay:
+      enabled: ${OUTBOX_RELAY_ENABLED:true}
+      interval: PT1S
+      batch-size: 100
+      send-timeout: PT10S
+
 logging:
   pattern:
     level: "%5p [${spring.application.name},%X{traceId:-},%X{spanId:-},%X{correlationId:-}]"
+
+---
+# Amazon MSK with IAM client authentication (SASL_SSL / AWS_MSK_IAM). The pod's
+# IRSA role (deploy/terraform) supplies the credentials. Activated with
+# SPRING_PROFILES_ACTIVE=msk in the Helm values; local runs use PLAINTEXT.
+spring:
+  config:
+    activate:
+      on-profile: msk
+  kafka:
+    security:
+      protocol: SASL_SSL
+    properties:
+      sasl.mechanism: AWS_MSK_IAM
+      sasl.jaas.config: "software.amazon.msk.auth.iam.IAMLoginModule required;"
+      sasl.client.callback.handler.class: software.amazon.msk.auth.iam.IAMClientCallbackHandler

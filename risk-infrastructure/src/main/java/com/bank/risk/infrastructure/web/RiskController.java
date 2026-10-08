@@ -1,8 +1,8 @@
 package com.bank.risk.infrastructure.web;
 
-import com.bank.risk.application.RiskAssessmentService;
 import com.bank.risk.application.dto.EvaluateRiskRequest;
 import com.bank.risk.application.dto.RiskAssessmentResponse;
+import com.bank.risk.domain.port.in.RiskAssessmentUseCase;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -16,9 +16,10 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/v1/risk")
 public class RiskController {
-    private final RiskAssessmentService service;
+    private final RiskAssessmentUseCase service;
 
-    public RiskController(RiskAssessmentService service) {
+    /** Receives the transactional use case from RiskConfiguration, never the bare service. */
+    public RiskController(RiskAssessmentUseCase service) {
         this.service = service;
     }
 

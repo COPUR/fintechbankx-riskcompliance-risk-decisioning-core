@@ -14,7 +14,7 @@ serviceAccount:
   roleArn: ""
 
 podLabels:
-  app.kubernetes.io/part-of: fintechbankx-lending
+  app.kubernetes.io/part-of: fintechbankx-risk
   fintechbankx.io/service-id: svc-rsk-decisioning
   sidecar.istio.io/inject: "true"
 
@@ -44,8 +44,15 @@ config:
   DB_URL: ""                      # jdbc:postgresql://<aurora-writer-endpoint>:5432/db_rsk_decisioning_<env>?sslmode=require
   DB_USERNAME: risk_decisioning_app
   DB_POOL_MAX: "10"
+  KAFKA_BOOTSTRAP_SERVERS: ""     # MSK bootstrap brokers (IAM listener, port 9098)
+  # Amazon MSK with IAM client auth through the pod's IRSA role (profile msk).
+  KAFKA_SECURITY_PROTOCOL: SASL_SSL
+  SPRING_PROFILES_ACTIVE: msk
   OIDC_ISSUER_URI: ""
   OIDC_JWK_SET_URI: ""
+  # Outbox relay to evt.rsk.risk.*; set "false" for the first cutover step
+  # (events stay in sc_rsk_decisioning.outbox_event until it is enabled).
+  OUTBOX_RELAY_ENABLED: "true"
 
 # Database credential, synced from AWS Secrets Manager by External Secrets Operator.
 externalSecret:

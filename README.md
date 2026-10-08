@@ -50,13 +50,27 @@ Bu repository, FinTechBankX DDD/EDA dönüşümünde **svc-rsk-decisioning** ser
 | Unit and integration tests | `./gradlew test` (integration tests need `TEST_DB_URL` or Docker) |
 | Run locally | `SPRING_DATASOURCE_PASSWORD=... ./gradlew :risk-bootstrap:bootRun` |
 | Database migrations | `risk-infrastructure/src/main/resources/db/migration` (schema `sc_rsk_decisioning`) |
+| API contract | [api/openapi/risk-context.yaml](api/openapi/risk-context.yaml) |
+| Event contract | [api/asyncapi/svc-rsk-decisioning.yaml](api/asyncapi/svc-rsk-decisioning.yaml) (validate: `npx -y @asyncapi/cli@2.13.0 validate api/asyncapi/svc-rsk-decisioning.yaml`) |
 | Container image | `docker build -t risk-decisioning-service .` |
 | Kubernetes | `deploy/helm/risk-decisioning-service` |
 | AWS infrastructure | `deploy/terraform` |
 | Data split from the monolith | [RUNBOOK-EXTRACT-rsk-decisioning](docs/migration/RUNBOOK-EXTRACT-rsk-decisioning.md) |
 | Deployment and Well-Architected mapping | [DEPLOYMENT_AND_WELL_ARCHITECTED](docs/architecture/DEPLOYMENT_AND_WELL_ARCHITECTED.md) |
 
-Module layout: `risk-domain` (assessment, policy, ports) ← `risk-application` (use case) ← `risk-infrastructure` (JPA, web, security) ← `risk-bootstrap` (Spring Boot app).
+Module layout: `risk-domain` (assessment, events, policy, ports) ← `risk-application` (use case) ← `risk-infrastructure` (JPA, transactional outbox, web, security) ← `risk-bootstrap` (Spring Boot app).
+
+## Published events
+
+| Topic | eventType | Key | When |
+|---|---|---|---|
+| `evt.rsk.risk.assessed.v1` | `Risk.RiskAssessment.Assessed.v1` | assessment id (`aggregateId`) | A transaction gets its first decision of record. A retry that returns the stored decision publishes nothing. |
+
+- Written to `sc_rsk_decisioning.outbox_event` in the same transaction as the `risk_assessment` row (`TransactionalRiskAssessmentUseCase`, `OutboxRiskEventPublisher`). If the insert loses a race on the unique `transaction_id`, the transaction rolls back and no event is left behind.
+- `OutboxRelay` publishes rows in insertion order. One replica relays at a time (Postgres advisory lock). Delivery is at least once, so consumers de-duplicate on `eventId`. Published rows are purged after `risk.outbox.retention` (7 days).
+- Runtime settings: `KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_SECURITY_PROTOCOL`, `SPRING_PROFILES_ACTIVE=msk` (Amazon MSK with IAM auth through the IRSA role), and `OUTBOX_RELAY_ENABLED` (default `true`).
+- Backlog metric: `outbox_pending_events{service="svc-rsk-decisioning"}`.
+- Status: Proposed. The AsyncAPI catalog mirrors this contract, and the topics are not yet created on the platform cluster.
 
 ## Dokümantasyon ve Referanslar
 - [Enterprise Architecture Hub](https://github.com/COPUR/fintechbankx-governance-architecture-enablement-enterprise-architecture)

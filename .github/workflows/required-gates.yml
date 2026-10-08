@@ -127,6 +127,17 @@ jobs:
             npx -y @redocly/cli@1.27.1 lint src/main/resources/openapi/*.yaml
           fi
 
+      - name: AsyncAPI contract validation
+        if: ${{ hashFiles('api/asyncapi/*.yaml') != '' }}
+        env:
+          NPM_CONFIG_CACHE: /tmp/.npm
+        shell: bash
+        run: |
+          # Top-level documents only; api/asyncapi/common holds shared schemas.
+          for spec in api/asyncapi/*.yaml; do
+            npx -y @asyncapi/cli@2.13.0 validate "$spec" --fail-severity=error
+          done
+
       - name: Install oasdiff
         if: ${{ hashFiles('openapi/*.yaml') != '' || hashFiles('api/openapi/*.yaml') != '' || hashFiles('src/main/resources/openapi/*.yaml') != '' }}
         shell: bash

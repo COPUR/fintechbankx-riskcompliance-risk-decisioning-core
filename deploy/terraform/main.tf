@@ -190,6 +190,26 @@ data "aws_iam_policy_document" "workload" {
     actions   = ["ssm:GetParameter", "ssm:GetParametersByPath"]
     resources = ["arn:aws:ssm:${var.aws_region}:*:parameter/fintechbankx/${var.environment}/${local.service_slug}/*"]
   }
+
+  # Outbox relay on MSK with IAM auth: connect (idempotent producer) and write
+  # only to this service's evt.rsk.risk.* topics. Skipped when msk_cluster_arn is empty.
+  dynamic "statement" {
+    for_each = var.msk_cluster_arn == "" ? [] : [var.msk_cluster_arn]
+    content {
+      sid       = "ConnectToEventCluster"
+      actions   = ["kafka-cluster:Connect", "kafka-cluster:DescribeCluster", "kafka-cluster:WriteDataIdempotently"]
+      resources = [statement.value]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.msk_cluster_arn == "" ? [] : [var.msk_cluster_arn]
+    content {
+      sid       = "PublishOwnEvents"
+      actions   = ["kafka-cluster:DescribeTopic", "kafka-cluster:WriteData"]
+      resources = ["${replace(statement.value, ":cluster/", ":topic/")}/evt.rsk.risk.*"]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "workload" {

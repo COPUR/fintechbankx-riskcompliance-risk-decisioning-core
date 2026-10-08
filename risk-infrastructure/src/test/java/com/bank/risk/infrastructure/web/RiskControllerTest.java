@@ -1,9 +1,9 @@
 package com.bank.risk.infrastructure.web;
 
-import com.bank.risk.application.RiskAssessmentService;
 import com.bank.risk.domain.RiskAssessment;
 import com.bank.risk.domain.RiskDecision;
 import com.bank.risk.domain.command.RiskEvaluationCommand;
+import com.bank.risk.domain.port.in.RiskAssessmentUseCase;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -24,12 +24,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class RiskControllerTest {
 
-    private RiskAssessmentService service;
+    private RiskAssessmentUseCase service;
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
-        service = mock(RiskAssessmentService.class);
+        service = mock(RiskAssessmentUseCase.class);
         mockMvc = MockMvcBuilders.standaloneSetup(new RiskController(service))
                 .setControllerAdvice(new ApiExceptionHandler()).build();
     }

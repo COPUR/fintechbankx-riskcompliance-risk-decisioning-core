@@ -8,8 +8,8 @@ Extraction of risk decisioning from `enterprise-loan-management-system` into
 |---|---|
 | Context / service | `rsk` / `svc-rsk-decisioning` |
 | Slice | Transaction risk assessment (score, ALLOW / REVIEW / BLOCK, reasons) and the history of credit risk assessments |
-| Owned data | `db_rsk_decisioning_<env>`, schema `sc_rsk_decisioning`: `risk_assessment`, `legacy_credit_risk_assessment` |
-| Events | none yet; there is no risk contract in the AsyncAPI catalog, and callers use the decision synchronously |
+| Owned data | `db_rsk_decisioning_<env>`, schema `sc_rsk_decisioning`: `risk_assessment`, `legacy_credit_risk_assessment`, `outbox_event` |
+| Events | `evt.rsk.risk.assessed.v1` (`Risk.RiskAssessment.Assessed.v1`) through a transactional outbox; contract `api/asyncapi/svc-rsk-decisioning.yaml` (Proposed). Callers still use the decision synchronously. |
 | Called by | payment services: `POST /api/v1/risk/assess`, `GET /api/v1/risk/assessments/{transactionId}` |
 
 ## 1. Data ownership split
@@ -21,7 +21,7 @@ Extraction of risk decisioning from `enterprise-loan-management-system` into
 | `customers`, `loans`, `loan_applications` | `svc-cus-profile-kyc`, `svc-ln-loan-lifecycle` | never copied here |
 | Fraud ML and vendor clients (`infrastructure/fraud` in the payments repo) | belongs here, not ported yet | payments screens with its rule-based adapter until this service exposes a model-backed score |
 
-Flyway migrations: `risk-infrastructure/src/main/resources/db/migration/V1__create_risk_assessment.sql`, `V2__create_legacy_credit_risk_assessment.sql`. The service never reads monolith tables and the monolith must not read `sc_rsk_decisioning`.
+Flyway migrations: `risk-infrastructure/src/main/resources/db/migration/V1__create_risk_assessment.sql`, `V2__create_legacy_credit_risk_assessment.sql`, `V3__create_outbox.sql`. The service never reads monolith tables and the monolith must not read `sc_rsk_decisioning`.
 
 ## 2. Backfill and reconciliation
 
@@ -37,10 +37,11 @@ The backfill is independent of the other contexts' backfills and idempotent (`ON
 
 | Step | Action | Rollback |
 |---|---|---|
-| 1 | Deploy the service; run the backfill; reconcile | drop `sc_rsk_decisioning`, nothing else changed |
+| 1 | Deploy the service with `OUTBOX_RELAY_ENABLED=false`; run the backfill; reconcile | drop `sc_rsk_decisioning`, nothing else changed |
 | 2 | Payments call `POST /api/v1/risk/assess` with the payment id as `transactionId` and a client-credentials token (`SERVICE` role), behind a flag | flag off; payments keep their rule-based screening |
 | 3 | Monolith stops writing `risk_assessments`; re-run the backfill for late rows | monolith table is still intact |
-| 4 | After one full month-end cycle: drop the monolith table | restore from snapshot |
+| 4 | Create `evt.rsk.risk.assessed.v1` on the platform cluster, grant the IRSA role (`msk_cluster_arn`), enable the outbox relay | relay off; events stay in the outbox |
+| 5 | After one full month-end cycle: drop the monolith table | restore from snapshot |
 
 ## 4. Acceptance checklist
 
@@ -50,6 +51,7 @@ The backfill is independent of the other contexts' backfills and idempotent (`ON
 - [x] Credit risk history backfill rehearsed with reconciliation in CI
 - [x] Container image, Helm chart, Terraform validate in CI (`Deployability` workflow)
 - [ ] Payment services call this API (follow-up in the payments repositories)
-- [ ] Risk decision events, once a contract is added to the AsyncAPI catalog
+- [x] Risk decision events written through a transactional outbox (one row per new assessment, none on retries or lost races), relayed in order with one active relay
+- [ ] Topic `evt.rsk.risk.assessed.v1` created on the platform cluster (fintechbankx-platform-event-streaming-kafka) and the catalog mirror updated
 - [ ] Model-backed fraud score (port of the payments `infrastructure/fraud` package)
 - [ ] Production backfill and reconciliation report attached here

@@ -18,6 +18,10 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
 
+    // Messaging (transactional outbox relay) and metrics
+    implementation 'org.springframework.kafka:spring-kafka'
+    implementation 'io.micrometer:micrometer-core'
+
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.security:spring-security-test'
 }
@@ -26,10 +30,13 @@ jacoco {
     toolVersion = '0.8.14'
 }
 
-// The JPA adapter and Spring configuration are covered by risk-bootstrap's
-// integration tests against Postgres; this module gates the unit-testable code.
+// The JPA adapters are covered by risk-bootstrap's integration tests against
+// Postgres; this module gates the unit-testable code, outbox included.
 def riskInfrastructureCoverageIncludes = [
     'com/bank/risk/infrastructure/config/RiskConfiguration*',
+    'com/bank/risk/infrastructure/config/OutboxConfiguration*',
+    'com/bank/risk/infrastructure/outbox/**',
+    'com/bank/risk/infrastructure/transaction/**',
     'com/bank/risk/infrastructure/persistence/InMemoryRiskAssessmentRepository*',
     'com/bank/risk/infrastructure/persistence/RiskAssessmentPersistenceMapper*',
     'com/bank/risk/infrastructure/web/**'

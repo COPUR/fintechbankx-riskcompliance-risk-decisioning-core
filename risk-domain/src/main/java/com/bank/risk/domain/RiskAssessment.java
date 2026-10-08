@@ -3,8 +3,10 @@ package com.bank.risk.domain;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 
 public final class RiskAssessment {
     private final RiskAssessmentId id;
@@ -15,6 +17,7 @@ public final class RiskAssessment {
     private final RiskDecision decision;
     private final List<String> reasons;
     private final Instant assessedAt;
+    private final List<RiskDomainEvent> domainEvents = new ArrayList<>();
 
     private RiskAssessment(
             RiskAssessmentId id,
@@ -56,7 +59,7 @@ public final class RiskAssessment {
             RiskDecision decision,
             List<String> reasons
     ) {
-        return new RiskAssessment(
+        RiskAssessment assessment = new RiskAssessment(
                 RiskAssessmentId.generate(),
                 transactionId,
                 amount,
@@ -68,11 +71,14 @@ public final class RiskAssessment {
                 // retry returns exactly the timestamp the first response carried.
                 Instant.now().truncatedTo(ChronoUnit.MICROS)
         );
+        assessment.domainEvents.add(assessment.assessedEvent());
+        return assessment;
     }
 
     /**
      * Rebuilds a stored assessment. The decision and score are kept as they
-     * were made, even if the policy has changed since.
+     * were made, even if the policy has changed since. Raises no event: the
+     * assessment was announced when it was first made.
      */
     public static RiskAssessment rehydrate(RiskAssessmentSnapshot snapshot) {
         Objects.requireNonNull(snapshot, "snapshot is required");
@@ -94,6 +100,20 @@ public final class RiskAssessment {
      */
     public boolean matches(String otherCurrency, BigDecimal otherAmount) {
         return currency.equals(otherCurrency) && amount.compareTo(otherAmount) == 0;
+    }
+
+    private RiskAssessedEvent assessedEvent() {
+        return new RiskAssessedEvent(UUID.randomUUID(), assessedAt, id, transactionId, decision, score,
+                amount, currency, reasons, assessedAt);
+    }
+
+    /** Events raised since the assessment was created, oldest first; publish them after saving. */
+    public List<RiskDomainEvent> getDomainEvents() {
+        return List.copyOf(domainEvents);
+    }
+
+    public void clearDomainEvents() {
+        domainEvents.clear();
     }
 
     public RiskAssessmentId getId() {

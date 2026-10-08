@@ -1,0 +1,185 @@
+# AsyncAPI contract for svc-rsk-decisioning.
+# Status: Proposed. This provider repository owns the contract; the asyncapi catalog mirrors it.
+# Naming: docs/NAMING_CONVENTION_DDD_EDA_BUSINESS_CONTEXT.md
+# Validate: npx -y @asyncapi/cli@2.13.0 validate api/asyncapi/svc-rsk-decisioning.yaml
+asyncapi: 3.0.0
+id: urn:fintechbankx:asyncapi:svc-rsk-decisioning
+info:
+  title: svc-rsk-decisioning events
+  version: 1.0.0
+  description: |-
+    Event contract for svc-rsk-decisioning (repository fintechbankx-riskcompliance-risk-decisioning-core, canonical name fintechbankx-risk-decisioning-service).
+
+    Status: Proposed. Owner: Risk and Compliance Decisioning Squad, Lending and Money Movement Tribe. Event namespace: `evt.rsk.risk`.
+
+    Implementation status: the service writes RiskAssessment.Assessed to its transactional outbox (sc_rsk_decisioning.outbox_event) in the same transaction as the decision of record, and a relay publishes it. A retried assessment of the same transaction returns the stored decision and publishes nothing.
+
+    Every message uses the standard envelope (common/event-envelope.yaml). Record key is the aggregateId (the assessment id). Topics use cleanup.policy=delete. Adding an optional field is a minor change; any removal, rename or type change is a new major version on a new topic with dual-publish.
+  tags:
+  - name: risk
+  - name: evt.rsk.risk
+  x-service-id: svc-rsk-decisioning
+  x-event-namespace: evt.rsk.risk
+  x-owning-squad: Risk and Compliance Decisioning Squad
+defaultContentType: application/json
+servers:
+  kafka:
+    host: '{bootstrapServers}'
+    protocol: kafka-secure
+    description: FinTechBankX event platform cluster (svc-evt-streaming). mTLS required.
+    variables:
+      bootstrapServers:
+        description: Bootstrap servers, injected per environment by the platform.
+    security:
+    - $ref: '#/components/securitySchemes/mtls'
+channels:
+  assessed:
+    address: evt.rsk.risk.assessed.v1
+    title: evt.rsk.risk.assessed.v1
+    description: Risk.RiskAssessment.Assessed.v1. A transaction received its risk decision of record.
+    messages:
+      RiskAssessed:
+        $ref: '#/components/messages/RiskAssessed'
+    bindings:
+      kafka:
+        topic: evt.rsk.risk.assessed.v1
+        partitions: 3
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy:
+          - delete
+          retention.ms: 604800000
+          max.message.bytes: 1048576
+        bindingVersion: 0.5.0
+  deadLetter:
+    address: evt.rsk.risk.dlq.v1
+    title: evt.rsk.risk.dlq.v1
+    description: Dead-letter topic for the evt.rsk.risk namespace. Written by consumers (not by svc-rsk-decisioning)
+      after bounded retries; replayed by the owning consumer squad.
+    messages:
+      DeadLetter:
+        $ref: '#/components/messages/DeadLetter'
+    bindings:
+      kafka:
+        topic: evt.rsk.risk.dlq.v1
+        partitions: 3
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy:
+          - delete
+          retention.ms: 1209600000
+          max.message.bytes: 1048576
+        bindingVersion: 0.5.0
+operations:
+  publishRiskAssessed:
+    action: send
+    title: Publish Risk.RiskAssessment.Assessed.v1
+    summary: svc-rsk-decisioning publishes Risk.RiskAssessment.Assessed.v1 through its transactional outbox.
+    channel:
+      $ref: '#/channels/assessed'
+    messages:
+    - $ref: '#/channels/assessed/messages/RiskAssessed'
+components:
+  schemas:
+    EventEnvelope:
+      $ref: ./common/event-envelope.yaml#/EventEnvelope
+    EventHeaders:
+      $ref: ./common/event-envelope.yaml#/EventHeaders
+    DeadLetterHeaders:
+      $ref: ./common/event-envelope.yaml#/DeadLetterHeaders
+    MonetaryAmount:
+      $ref: ./common/event-envelope.yaml#/MonetaryAmount
+    RiskAssessedData:
+      type: object
+      description: Payload of Risk.RiskAssessment.Assessed.v1. Ids, the decision and reason codes only; no
+        customer or counterparty data.
+      properties:
+        assessmentId:
+          type: string
+          pattern: '^RISK-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          description: Assessment id (same as aggregateId), RISK- followed by a UUID. The same id the
+            risk-context API returns as assessmentId.
+        transactionId:
+          type: string
+          minLength: 1
+          description: Id of the assessed transaction, as given by the caller.
+        decision:
+          type: string
+          enum:
+          - ALLOW
+          - REVIEW
+          - BLOCK
+          description: Decision of record. REVIEW puts the transaction in the manual review queue.
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Risk score the policy produced.
+        amount:
+          allOf:
+          - $ref: '#/components/schemas/MonetaryAmount'
+          description: Assessed amount.
+        reasons:
+          type: array
+          description: 'Policy reason codes, for example HIGH_AMOUNT, VERY_HIGH_AMOUNT, HIGH_RISK_COUNTRY,
+            HIGH_VELOCITY, MEDIUM_VELOCITY. Consumers must accept codes they do not know.'
+          items:
+            type: string
+            pattern: '^[A-Z][A-Z0-9_]*$'
+        assessedAt:
+          type: string
+          format: date-time
+          description: When the decision was made (UTC).
+      required:
+      - assessmentId
+      - transactionId
+      - decision
+      - score
+      - amount
+      - reasons
+      - assessedAt
+  messages:
+    RiskAssessed:
+      name: RiskAssessed
+      title: Risk.RiskAssessment.Assessed.v1
+      summary: A transaction received its risk decision of record.
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/EventHeaders'
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: Risk.RiskAssessment.Assessed.v1
+            producer:
+              const: svc-rsk-decisioning
+            data:
+              $ref: '#/components/schemas/RiskAssessedData'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: aggregateId (assessmentId).
+          bindingVersion: 0.5.0
+      x-source-class: com.bank.risk.domain.RiskAssessedEvent
+    DeadLetter:
+      name: DeadLetter
+      title: Dead letter for evt.rsk.risk
+      summary: A message from this namespace that a consumer could not process after bounded retries.
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/DeadLetterHeaders'
+      payload:
+        $ref: '#/components/schemas/EventEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: Original record key (aggregateId).
+          bindingVersion: 0.5.0
+  securitySchemes:
+    mtls:
+      type: X509
+      description: Mutual TLS with platform-issued client certificates.
