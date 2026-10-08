@@ -61,6 +61,10 @@ jobs:
             exit 1
           fi
           grep -q 'OUTBOX_RELAY_ENABLED: "true"' <<<"$(helm template ci "$chart" $args --set config.OUTBOX_RELAY_ENABLED=true)"
+          # Every ExternalSecret: app.kubernetes.io/name = service account, keys under <env>/<service account>/.
+          python3 -c 'import yaml' 2>/dev/null || pip install --user pyyaml==6.0.2
+          sa="$(helm show values "$chart" | python3 -c 'import sys, yaml; print(yaml.safe_load(sys.stdin)["serviceAccount"]["name"])')"
+          ./scripts/ci/check-externalsecrets.py ci "$sa" <<<"$rendered"
 
   terraform:
     name: deploy/terraform
