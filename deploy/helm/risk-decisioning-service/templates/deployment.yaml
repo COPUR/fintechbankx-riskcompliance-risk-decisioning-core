@@ -1,3 +1,4 @@
+{{- include "risk.validateDatabaseTls" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -62,6 +63,11 @@ spec:
               containerPort: {{ .Values.service.port }}
             - name: http-management
               containerPort: {{ .Values.service.managementPort }}
+          {{- if .Values.databaseCa.enabled }}
+          env:
+            - name: DB_SSL_ROOT_CERT
+              value: {{ printf "%s/%s" (trimSuffix "/" .Values.databaseCa.mountPath) .Values.databaseCa.key | quote }}
+          {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "risk.name" . }}
@@ -101,6 +107,19 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.databaseCa.enabled }}
+            - name: database-ca
+              mountPath: {{ .Values.databaseCa.mountPath }}
+              readOnly: true
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- if .Values.databaseCa.enabled }}
+        - name: database-ca
+          configMap:
+            name: {{ .Values.databaseCa.configMapName }}
+            items:
+              - key: {{ .Values.databaseCa.key }}
+                path: {{ .Values.databaseCa.key }}
+        {{- end }}

@@ -43,6 +43,11 @@ relay's connection to MSK (port 9098) is dropped until the platform allows it. B
    exists on the platform cluster.
 3. `msk_cluster_arn` is set in Terraform, so the IRSA role can publish to `evt.rsk.risk.*`.
 
+Aurora TLS: `config.DB_URL` must use `sslmode=verify-full` (the Terraform `jdbc_url` output does, with
+`sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem`); the chart fails to render otherwise. It mounts ConfigMap
+`rds-ca-bundle` read-only at `/etc/fintechbankx/rds-ca` (not optional) and exports `DB_SSL_ROOT_CERT`
+(cicd-templates 4f0f266). Local, compose and test database URLs are unchanged.
+
 ## Known gaps
 
 - The mesh contract does not yet give namespace `risk` MSK egress, so the relay stays off (see above).

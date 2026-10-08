@@ -40,9 +40,23 @@ autoscaling:
 podDisruptionBudget:
   minAvailable: 2
 
+# Amazon RDS CA bundle for Aurora TLS with certificate and host verification
+# (cicd-templates 4f0f266). The platform's trust-manager Bundle publishes
+# ConfigMap rds-ca-bundle in every service namespace. The volume is not
+# optional: a missing bundle keeps the pod from starting instead of letting it
+# connect without verification. The path is also exported as DB_SSL_ROOT_CERT.
+databaseCa:
+  enabled: true
+  configMapName: rds-ca-bundle
+  key: global-bundle.pem
+  mountPath: /etc/fintechbankx/rds-ca
+
 # Non-secret runtime settings, rendered into a ConfigMap.
 config:
-  DB_URL: ""                      # jdbc:postgresql://<aurora-writer-endpoint>:5432/db_rsk_decisioning_<env>?sslmode=require
+  # Terraform output jdbc_url: jdbc:postgresql://<aurora-writer-endpoint>:5432/db_rsk_decisioning_<env>
+  #   ?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
+  # A jdbc:postgresql DB_URL without sslmode=verify-full fails the render.
+  DB_URL: ""
   DB_USERNAME: risk_decisioning_app
   DB_POOL_MAX: "10"
   KAFKA_BOOTSTRAP_SERVERS: ""     # MSK bootstrap brokers (IAM listener, port 9098)

@@ -18,3 +18,15 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 {{- define "risk.secretName" -}}
 {{ include "risk.name" . }}-db
 {{- end -}}
+
+
+{{/*
+A PostgreSQL DB_URL must verify the server certificate and host name:
+sslmode=require encrypts but trusts any certificate (cicd-templates 4f0f266).
+*/}}
+{{- define "risk.validateDatabaseTls" -}}
+{{- $url := toString (default "" (index .Values.config "DB_URL")) -}}
+{{- if and (hasPrefix "jdbc:postgresql:" $url) (not (contains "sslmode=verify-full" $url)) -}}
+{{- fail "config.DB_URL must use sslmode=verify-full (with sslrootcert=<databaseCa.mountPath>/<databaseCa.key>)" -}}
+{{- end -}}
+{{- end -}}
