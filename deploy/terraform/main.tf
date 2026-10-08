@@ -36,19 +36,36 @@ module "service_base" {
 
 # --- Encryption -------------------------------------------------------------
 
+# Two keys (ADR-023). The database key encrypts Aurora storage, snapshots and
+# Performance Insights and is not tagged, so the platform External Secrets
+# Operator role, which may decrypt only keys tagged fintechbankx.io/secrets,
+# cannot decrypt it. The secrets key protects only Secrets Manager secrets.
+
 resource "aws_kms_key" "database" {
-  description             = "Encrypts ${local.database} storage, snapshots, logs and credentials"
+  description             = "Encrypts ${local.database} storage, snapshots and Performance Insights"
   enable_key_rotation     = true
   deletion_window_in_days = 30
-
-  # The platform External Secrets Operator role may decrypt only keys with
-  # this tag (platform contract, secrets addendum).
-  tags = merge(local.tags, { "fintechbankx.io/secrets" = "true" })
+  tags                    = local.tags
 }
 
 resource "aws_kms_alias" "database" {
   name          = "alias/${local.name}-db"
   target_key_id = aws_kms_key.database.key_id
+}
+
+resource "aws_kms_key" "secrets" {
+  description             = "Encrypts the Secrets Manager secrets of ${local.service_id}"
+  enable_key_rotation     = true
+  deletion_window_in_days = 30
+
+  # The platform External Secrets Operator role may decrypt only keys with
+  # this tag (platform contract, secrets addendum; ADR-023).
+  tags = merge(local.tags, { "fintechbankx.io/secrets" = "true" })
+}
+
+resource "aws_kms_alias" "secrets" {
+  name          = "alias/${local.name}-secrets"
+  target_key_id = aws_kms_key.secrets.key_id
 }
 
 # --- Network ----------------------------------------------------------------
@@ -98,7 +115,7 @@ resource "aws_rds_cluster" "database" {
   database_name                       = local.database
   master_username                     = "risk_admin"
   manage_master_user_password         = true
-  master_user_secret_kms_key_id       = aws_kms_key.database.key_id
+  master_user_secret_kms_key_id       = aws_kms_key.secrets.key_id
   db_subnet_group_name                = aws_db_subnet_group.database.name
   vpc_security_group_ids              = [aws_security_group.database.id]
   db_cluster_parameter_group_name     = aws_rds_cluster_parameter_group.database.name
@@ -148,7 +165,7 @@ resource "aws_secretsmanager_secret" "app_database" {
   # <env>/<service-slug>/...: the only path the platform ESO role may read.
   name                    = "${var.environment}/${local.service_slug}/db-app"
   description             = "Application database credential for ${local.service_id}"
-  kms_key_id              = aws_kms_key.database.arn
+  kms_key_id              = aws_kms_key.secrets.arn
   recovery_window_in_days = 7
 }
 
