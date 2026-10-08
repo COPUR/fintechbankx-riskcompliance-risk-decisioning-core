@@ -56,7 +56,15 @@ class RiskEventsAsyncApiContractTest {
         Map<String, Object> dataSchema = at(contract, "components", "schemas", "RiskAssessedData");
         JsonNode data = envelope.get("data");
         assertThat(data.fieldNames()).toIterable()
-            .containsExactlyInAnyOrderElementsOf(this.<List<String>>at(dataSchema, "required"));
+            .containsAll(this.<List<String>>at(dataSchema, "required"))
+            .allMatch(field -> this.<Map<String, Object>>at(dataSchema, "properties").containsKey(field));
+        // Additive optional field (minor version 1.1.0): consumers must accept values they do not know.
+        assertThat(this.<String>at(contract, "info", "version")).isEqualTo("1.1.0");
+        assertThat(this.<List<String>>at(dataSchema, "required")).doesNotContain("attestationSource");
+        assertThat(this.<List<String>>at(dataSchema, "properties", "attestationSource", "enum"))
+            .contains(data.get("attestationSource").asText());
+        assertThat(data.get("attestationSource").asText()).isEqualTo("CALLER_ATTESTED");
+        assertThat(data.has("attestedBy")).as("the caller's client id stays in the API, not on the event").isFalse();
         assertThat(data.get("assessmentId").asText()).matches(pattern(dataSchema, "assessmentId"))
             .isEqualTo(envelope.get("aggregateId").asText());
         assertThat(this.<List<String>>at(dataSchema, "properties", "decision", "enum"))

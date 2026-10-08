@@ -32,6 +32,7 @@ class RiskAssessedEventTest {
         assertThat(event.currency()).isEqualTo("AED");
         assertThat(event.reasons()).containsExactly("HIGH_AMOUNT", "VERY_HIGH_AMOUNT", "HIGH_RISK_COUNTRY", "HIGH_VELOCITY");
         assertThat(event.assessedAt()).isEqualTo(assessment.getAssessedAt());
+        assertThat(event.attestationSource()).isEqualTo(AttestationSource.CALLER_ATTESTED);
         assertThat(event.occurredAt()).isEqualTo(assessment.getAssessedAt());
     }
 
@@ -67,7 +68,7 @@ class RiskAssessedEventTest {
     void theEventKeepsACopyOfTheReasons() {
         List<String> reasons = new ArrayList<>(List.of("HIGH_AMOUNT"));
         RiskAssessedEvent event = new RiskAssessedEvent(UUID.randomUUID(), DECIDED, RiskAssessmentId.of("RISK-1"),
-                "PAY-81", RiskDecision.REVIEW, 60, new BigDecimal("12000.00"), "AED", reasons, DECIDED);
+                "PAY-81", RiskDecision.REVIEW, 60, new BigDecimal("12000.00"), "AED", reasons, DECIDED, com.bank.risk.domain.AttestationSource.CALLER_ATTESTED);
 
         reasons.add("TAMPERED");
 
@@ -81,22 +82,22 @@ class RiskAssessedEventTest {
         BigDecimal amount = new BigDecimal("1.00");
 
         assertThatThrownBy(() -> new RiskAssessedEvent(null, DECIDED, assessmentId, "PAY", RiskDecision.ALLOW, 0,
-                amount, "AED", List.of(), DECIDED)).isInstanceOf(NullPointerException.class).hasMessageContaining("eventId");
+                amount, "AED", List.of(), DECIDED, com.bank.risk.domain.AttestationSource.CALLER_ATTESTED)).isInstanceOf(NullPointerException.class).hasMessageContaining("eventId");
         assertThatThrownBy(() -> new RiskAssessedEvent(id, null, assessmentId, "PAY", RiskDecision.ALLOW, 0,
-                amount, "AED", List.of(), DECIDED)).isInstanceOf(NullPointerException.class).hasMessageContaining("occurredAt");
+                amount, "AED", List.of(), DECIDED, com.bank.risk.domain.AttestationSource.CALLER_ATTESTED)).isInstanceOf(NullPointerException.class).hasMessageContaining("occurredAt");
         assertThatThrownBy(() -> new RiskAssessedEvent(id, DECIDED, null, "PAY", RiskDecision.ALLOW, 0,
-                amount, "AED", List.of(), DECIDED)).isInstanceOf(NullPointerException.class).hasMessageContaining("assessmentId");
+                amount, "AED", List.of(), DECIDED, com.bank.risk.domain.AttestationSource.CALLER_ATTESTED)).isInstanceOf(NullPointerException.class).hasMessageContaining("assessmentId");
         assertThatThrownBy(() -> new RiskAssessedEvent(id, DECIDED, assessmentId, null, RiskDecision.ALLOW, 0,
-                amount, "AED", List.of(), DECIDED)).isInstanceOf(NullPointerException.class).hasMessageContaining("transactionId");
+                amount, "AED", List.of(), DECIDED, com.bank.risk.domain.AttestationSource.CALLER_ATTESTED)).isInstanceOf(NullPointerException.class).hasMessageContaining("transactionId");
         assertThatThrownBy(() -> new RiskAssessedEvent(id, DECIDED, assessmentId, "PAY", null, 0,
-                amount, "AED", List.of(), DECIDED)).isInstanceOf(NullPointerException.class).hasMessageContaining("decision");
+                amount, "AED", List.of(), DECIDED, com.bank.risk.domain.AttestationSource.CALLER_ATTESTED)).isInstanceOf(NullPointerException.class).hasMessageContaining("decision");
         assertThatThrownBy(() -> new RiskAssessedEvent(id, DECIDED, assessmentId, "PAY", RiskDecision.ALLOW, 0,
-                null, "AED", List.of(), DECIDED)).isInstanceOf(NullPointerException.class).hasMessageContaining("amount");
+                null, "AED", List.of(), DECIDED, com.bank.risk.domain.AttestationSource.CALLER_ATTESTED)).isInstanceOf(NullPointerException.class).hasMessageContaining("amount");
         assertThatThrownBy(() -> new RiskAssessedEvent(id, DECIDED, assessmentId, "PAY", RiskDecision.ALLOW, 0,
-                amount, null, List.of(), DECIDED)).isInstanceOf(NullPointerException.class).hasMessageContaining("currency");
+                amount, null, List.of(), DECIDED, com.bank.risk.domain.AttestationSource.CALLER_ATTESTED)).isInstanceOf(NullPointerException.class).hasMessageContaining("currency");
         assertThatThrownBy(() -> new RiskAssessedEvent(id, DECIDED, assessmentId, "PAY", RiskDecision.ALLOW, 0,
-                amount, "AED", null, DECIDED)).isInstanceOf(NullPointerException.class).hasMessageContaining("reasons");
+                amount, "AED", null, DECIDED, com.bank.risk.domain.AttestationSource.CALLER_ATTESTED)).isInstanceOf(NullPointerException.class).hasMessageContaining("reasons");
         assertThatThrownBy(() -> new RiskAssessedEvent(id, DECIDED, assessmentId, "PAY", RiskDecision.ALLOW, 0,
-                amount, "AED", List.of(), null)).isInstanceOf(NullPointerException.class).hasMessageContaining("assessedAt");
+                amount, "AED", List.of(), null, com.bank.risk.domain.AttestationSource.CALLER_ATTESTED)).isInstanceOf(NullPointerException.class).hasMessageContaining("assessedAt");
     }
 }
