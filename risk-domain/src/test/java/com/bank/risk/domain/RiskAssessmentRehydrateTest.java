@@ -28,17 +28,21 @@ class RiskAssessmentRehydrateTest {
     }
 
     @Test
-    void rehydrateKeepsTheAttestationAndAcceptsAnUnknownAttesterForRowsDecidedBeforeItWasStored() {
+    void rehydrateKeepsTheAttestationAndRejectsARowWithoutAnAttester() {
         RiskAssessment attested = RiskAssessment.rehydrate(new RiskAssessmentSnapshot(
                 RiskAssessmentId.of("RISK-7"), "TX-7", new BigDecimal("1.00"), "USD", false, 0, 0,
                 RiskDecision.ALLOW, List.of(), DECIDED, AttestationSource.CALLER_ATTESTED, "staff-7", "rsk-policy-v2"));
-        RiskAssessment legacy = RiskAssessment.rehydrate(new RiskAssessmentSnapshot(
-                RiskAssessmentId.of("RISK-8"), "TX-8", new BigDecimal("1.00"), "USD", false, 0, 0,
-                RiskDecision.ALLOW, List.of(), DECIDED, AttestationSource.CALLER_ATTESTED, null, "rsk-policy-v2"));
 
         assertThat(attested.getAttestationSource()).isEqualTo(AttestationSource.CALLER_ATTESTED);
         assertThat(attested.getAttestedBy()).isEqualTo("staff-7");
-        assertThat(legacy.getAttestedBy()).isNull();
+        // Every decision of record names who stated its facts (V5 attested_by NOT NULL).
+        for (String missing : new String[] {null, " "}) {
+            assertThatThrownBy(() -> RiskAssessment.rehydrate(new RiskAssessmentSnapshot(
+                    RiskAssessmentId.of("RISK-8"), "TX-8", new BigDecimal("1.00"), "USD", false, 0, 0,
+                    RiskDecision.ALLOW, List.of(), DECIDED, AttestationSource.CALLER_ATTESTED, missing, "rsk-policy-v2")))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("attestedBy");
+        }
         assertThatThrownBy(() -> RiskAssessment.rehydrate(new RiskAssessmentSnapshot(
                 RiskAssessmentId.of("RISK-9"), "TX-9", new BigDecimal("1.00"), "USD", false, 0, 0,
                 RiskDecision.ALLOW, List.of(), DECIDED, null, "staff-9", "rsk-policy-v2")))

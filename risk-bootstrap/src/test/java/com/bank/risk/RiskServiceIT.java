@@ -18,6 +18,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -51,6 +52,26 @@ class RiskServiceIT {
     void cleanTables() {
         jdbc.update("delete from sc_rsk_decisioning.outbox_event");
         jdbc.update("delete from sc_rsk_decisioning.risk_assessment");
+    }
+
+    /** V5: a decision of record always names its attestation source and who attested it. */
+    @Test
+    void theDatabaseRefusesADecisionWithoutAttesterOrAttestationSource() {
+        String columns = "assessment_id, transaction_id, amount, currency, high_risk_country, velocity_score, score,"
+            + " decision, reasons, assessed_at, rule_set_version";
+        String values = "'RISK-NULL-%s', 'TX-NULL-%s', 10.00, 'AED', false, 0, 0, 'ALLOW', '[]'::jsonb, now(), 'rsk-policy-v2'";
+
+        assertThatThrownBy(() -> jdbc.update("insert into sc_rsk_decisioning.risk_assessment (" + columns
+                + ", attestation_source) values (" + values.formatted("1", "1") + ", 'CALLER_ATTESTED')"))
+            .as("attested_by is NOT NULL")
+            .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class)
+            .hasMessageContaining("attested_by");
+        assertThatThrownBy(() -> jdbc.update("insert into sc_rsk_decisioning.risk_assessment (" + columns
+                + ", attested_by) values (" + values.formatted("2", "2") + ", 'svc-pay-initiation-settlement')"))
+            .as("attestation_source is NOT NULL, without a default")
+            .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class)
+            .hasMessageContaining("attestation_source");
+        assertThat(jdbc.queryForObject("select count(*) from sc_rsk_decisioning.risk_assessment", Integer.class)).isZero();
     }
 
     @Test
