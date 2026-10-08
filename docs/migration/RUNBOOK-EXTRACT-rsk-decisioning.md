@@ -42,7 +42,7 @@ The backfill is independent of the other contexts' backfills and can be re-run u
 | Step | Action | Rollback |
 |---|---|---|
 | 1 | Deploy the service with the chart default `config.OUTBOX_RELAY_ENABLED: "false"` (no MSK egress is needed yet); run the backfill; reconcile | drop `sc_rsk_decisioning`, nothing else changed |
-| 2 | Payments call `POST /api/v1/risk/assess` with the payment id as `transactionId` and a client-credentials token (`SERVICE` role), behind a flag | flag off; payments keep their rule-based screening |
+| 2 | Payments call `POST /api/v1/risk/assess` with the payment id as `transactionId` and a client-credentials token (`SERVICE` role), behind a flag. Network path: the service-mesh repo's `allow-ingress-from-payments` in namespace `risk` (mesh #11); this chart ships no NetworkPolicy | flag off; payments keep their rule-based screening |
 | 3 | Monolith stops writing `risk_assessments`; re-run the backfill for late rows | monolith table is still intact |
 | 4 | Preconditions: the mesh contract (fintechbankx-platform-mesh-security-service-mesh `contracts/mesh-contract.yaml`) lists `msk` in the datastores of `risk-decisioning-service` and `allow-egress-msk` is generated for namespace `risk`; asyncapi-catalog #11 (the catalog entry for
 `api/asyncapi/svc-rsk-decisioning.yaml`) is merged; `evt.rsk.risk.assessed.v1` exists on the platform cluster; the IRSA role is granted (`msk_cluster_arn`). Then enable the relay: `helm upgrade ... --set config.OUTBOX_RELAY_ENABLED=true` (or the same key in the environment's values file). Check `outbox_pending_events` falls to zero and `outbox_parked_events` stays zero | `--set config.OUTBOX_RELAY_ENABLED=false`; events stay in the outbox |

@@ -43,8 +43,8 @@ import java.util.Map;
  * called with internal client-credentials and staff tokens, which are not
  * DPoP-bound. The OpenAPI DPoP header is therefore optional.
  *
- * Actuator endpoints are served on the management port, which the chart's
- * NetworkPolicy opens to the observability namespace only.
+ * Actuator endpoints are served on the management port; which namespaces may
+ * reach it is decided by the service-mesh repository's network policies.
  */
 @Configuration
 @EnableMethodSecurity
