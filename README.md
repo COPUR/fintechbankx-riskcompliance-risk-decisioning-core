@@ -56,6 +56,7 @@ Bu repository, FinTechBankX DDD/EDA dönüşümünde **svc-rsk-decisioning** ser
 | Kubernetes | `deploy/helm/risk-decisioning-service` |
 | AWS infrastructure | `deploy/terraform` |
 | Data split from the monolith | [RUNBOOK-EXTRACT-rsk-decisioning](docs/migration/RUNBOOK-EXTRACT-rsk-decisioning.md) |
+| Decisions | [ADR 0001: risk facts are caller-attested](docs/architecture/decisions/0001-risk-facts-are-caller-attested.md) (Proposed) |
 | Deployment and Well-Architected mapping | [DEPLOYMENT_AND_WELL_ARCHITECTED](docs/architecture/DEPLOYMENT_AND_WELL_ARCHITECTED.md) |
 
 ## Calling the service
