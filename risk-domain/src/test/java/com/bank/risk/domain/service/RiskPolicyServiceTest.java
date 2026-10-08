@@ -145,6 +145,44 @@ class RiskPolicyServiceTest {
         assertThat(yen.getDecision()).isEqualTo(RiskDecision.REVIEW);
     }
 
+    private static RiskEvaluationCommand payment(String amount, String currency, PaymentType type) {
+        return new RiskEvaluationCommand("TX-TYPE", new BigDecimal(amount), currency, false, 0,
+                "svc-pay-initiation-settlement", type);
+    }
+
+    /**
+     * rsk-policy-v3, monolith parity (FraudDetectionServiceAdapter.isSuspiciousPattern): a MOBILE_PAYMENT above
+     * 5000 is refused as fraud. LP-05 found 5000.01 USD MOBILE_PAYMENT ALLOWed.
+     */
+    @Test
+    void aMobilePaymentAbove5000UsdIsBlockedAsSuspicious() {
+        var mobile = service.evaluate(payment("5000.01", "USD", PaymentType.MOBILE_PAYMENT));
+
+        assertThat(mobile.getDecision()).isEqualTo(RiskDecision.BLOCK);
+        assertThat(mobile.getReasons()).containsExactly("SUSPICIOUS_MOBILE_AMOUNT");
+        assertThat(mobile.getScore()).isZero();
+        assertThat(mobile.getPaymentType()).isEqualTo(PaymentType.MOBILE_PAYMENT);
+    }
+
+    @Test
+    void mobileAmountEdges() {
+        assertThat(service.evaluate(payment("5000.00", "USD", PaymentType.MOBILE_PAYMENT)).getDecision())
+                .as("5000.00 is not above 5000").isEqualTo(RiskDecision.ALLOW);
+        assertThat(service.evaluate(payment("5000.01", "USD", PaymentType.TRANSFER)).getDecision())
+                .as("only mobile payments").isEqualTo(RiskDecision.ALLOW);
+        assertThat(service.evaluate(payment("5000.01", "USD", PaymentType.DEBIT_CARD)).getReasons()).isEmpty();
+    }
+
+    @Test
+    void theMobileRuleIsUsdOnlyAndBothPatternsAreReported() {
+        var yen = service.evaluate(payment("5000.01", "JPY", PaymentType.MOBILE_PAYMENT));
+        assertThat(yen.getReasons()).containsExactly("UNSUPPORTED_CURRENCY");
+        assertThat(yen.getDecision()).isEqualTo(RiskDecision.REVIEW);
+
+        assertThat(service.evaluate(payment("12000.00", "USD", PaymentType.MOBILE_PAYMENT)).getReasons())
+                .containsExactly("HIGH_AMOUNT", "SUSPICIOUS_ROUND_AMOUNT", "SUSPICIOUS_MOBILE_AMOUNT");
+    }
+
     @Test
     void thresholdsMustBePositiveAndOrdered() {
         assertThatThrownBy(() -> new AmountThresholds(BigDecimal.ZERO, new BigDecimal("50000")))
