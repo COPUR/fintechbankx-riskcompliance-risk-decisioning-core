@@ -122,7 +122,8 @@ components:
         reasons:
           type: array
           description: 'Policy reason codes, for example HIGH_AMOUNT, VERY_HIGH_AMOUNT, HIGH_RISK_COUNTRY,
-            HIGH_VELOCITY, MEDIUM_VELOCITY. Consumers must accept codes they do not know.'
+            HIGH_VELOCITY, MEDIUM_VELOCITY, UNSUPPORTED_CURRENCY (no amount thresholds for the currency, so
+            the amount was not scored and the decision is at least REVIEW). Consumers must accept codes they do not know.'
           items:
             type: string
             pattern: '^[A-Z][A-Z0-9_]*$'

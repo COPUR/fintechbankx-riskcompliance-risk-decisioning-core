@@ -173,7 +173,10 @@ components:
           exclusiveMinimum: true
         currency:
           type: string
-          description: Upper-case ISO 4217 code, for example AED.
+          description: |-
+            Upper-case ISO 4217 code, for example USD. Every code is accepted;
+            amount thresholds exist for USD only, so other currencies get at
+            least REVIEW with reason UNSUPPORTED_CURRENCY.
         highRiskCountry:
           type: boolean
           description: |-
@@ -203,6 +206,13 @@ components:
           enum: [ALLOW, REVIEW, BLOCK]
         reasons:
           type: array
+          description: |-
+            Policy reason codes, for example HIGH_AMOUNT, VERY_HIGH_AMOUNT,
+            HIGH_RISK_COUNTRY, HIGH_VELOCITY, MEDIUM_VELOCITY. Amount
+            thresholds are per currency (USD only today); for any other
+            currency the amount is not scored, UNSUPPORTED_CURRENCY is added and
+            the decision is at least REVIEW. Clients must accept codes they do
+            not know.
           items:
             type: string
         assessedAt:
