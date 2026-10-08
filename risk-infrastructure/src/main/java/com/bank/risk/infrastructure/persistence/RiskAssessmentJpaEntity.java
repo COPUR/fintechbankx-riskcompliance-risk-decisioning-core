@@ -54,7 +54,7 @@ public class RiskAssessmentJpaEntity {
     @Column(name = "attestation_source", nullable = false, length = 32, updatable = false)
     private String attestationSource;
 
-    @Column(name = "attested_by", length = 255, updatable = false)
+    @Column(name = "attested_by", nullable = false, length = 255, updatable = false)
     private String attestedBy;
 
     @Column(name = "rule_set_version", nullable = false, length = 64, updatable = false)

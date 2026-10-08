@@ -228,8 +228,7 @@ components:
           type: string
           description: |-
             The caller that stated the risk facts: the client id (azp) of a
-            service caller, or the subject of a staff caller. Absent for
-            decisions stored before it was recorded.
+            service caller, or the subject of a staff caller.
     ErrorResponse:
       type: object
       required: [code, message, interactionId, timestamp]

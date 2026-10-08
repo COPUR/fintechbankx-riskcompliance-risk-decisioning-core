@@ -67,6 +67,9 @@ public final class RiskAssessment {
         this.reasons = List.copyOf(Objects.requireNonNull(reasons, "reasons are required"));
         this.assessedAt = Objects.requireNonNull(assessedAt, "assessedAt is required");
         this.attestationSource = Objects.requireNonNull(attestationSource, "attestationSource is required");
+        if (attestedBy == null || attestedBy.isBlank()) {
+            throw new IllegalArgumentException("attestedBy (the caller stating the risk facts) is required");
+        }
         this.attestedBy = attestedBy;
         if (ruleSetVersion == null || ruleSetVersion.isBlank()) {
             throw new IllegalArgumentException("ruleSetVersion is required");
@@ -216,7 +219,7 @@ public final class RiskAssessment {
         return attestationSource;
     }
 
-    /** The calling client (azp) or staff subject that stated the risk facts; null for decisions stored before V5. */
+    /** The calling client (azp) or staff subject that stated the risk facts. */
     public String getAttestedBy() {
         return attestedBy;
     }

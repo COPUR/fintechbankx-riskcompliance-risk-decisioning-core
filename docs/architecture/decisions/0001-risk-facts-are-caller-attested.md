@@ -26,7 +26,7 @@ stated. A decision log that hides this would overstate what risk checked.
    and the additive `attestationSource` field on the API response. The only
    value today is `CALLER_ATTESTED`. `attested_by` records who stated the
    facts: the client id (`azp`) of a SERVICE caller, or the subject of a staff
-   caller. Decisions stored before V5 keep `attested_by` NULL.
+   caller. Both columns are NOT NULL.
 3. The facts (amount, currency, both flags) and the policy version
    (`rule_set_version`, V7; `rsk-policy-v2` since amount thresholds became per
    currency) are stored with the decision. A retry must repeat every fact to get
