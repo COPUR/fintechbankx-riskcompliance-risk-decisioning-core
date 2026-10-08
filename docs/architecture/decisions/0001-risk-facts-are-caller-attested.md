@@ -21,6 +21,10 @@ stated. A decision log that hides this would overstate what risk checked.
 
 1. `highRiskCountry` and `velocityScore` are required. An omitted or null
    value is a `400 INVALID_REQUEST`, never read as the low-risk `false` or `0`.
+   A caller that cannot read its fact sources must not call assess; it answers
+   retryable instead, because the decision of record is insert-only and a
+   re-assessment of the same transaction with different facts is refused
+   (`409 TRANSACTION_ALREADY_ASSESSED`).
 2. Every decision records where its facts came from: `attestation_source` on
    `sc_rsk_decisioning.risk_assessment` (V5), `AttestationSource` in the domain,
    and the additive `attestationSource` field on the API response. The only
