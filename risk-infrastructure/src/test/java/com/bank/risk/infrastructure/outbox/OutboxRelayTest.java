@@ -43,9 +43,8 @@ class OutboxRelayTest {
     private final SpringDataOutboxRepository outbox = mock(SpringDataOutboxRepository.class);
     private final KafkaTemplate<String, String> kafka = mock(KafkaTemplate.class);
     private final TransactionTemplate transactions = inlineTransactions();
-    private static final int MAX_ATTEMPTS = 3;
-    private final OutboxRelay relay = new OutboxRelay(outbox, kafka, transactions,
-        Clock.fixed(NOW, ZoneOffset.UTC), 50, Duration.ofSeconds(1), Duration.ofDays(7), MAX_ATTEMPTS);
+    private static final Duration PARK_AFTER = Duration.ofHours(24);
+    private final OutboxRelay relay = relayAt(NOW);
 
     @Test
     void theRelayLockKeyIsRiskSpecific() {
@@ -108,7 +107,7 @@ class OutboxRelayTest {
             }
         };
         OutboxRelay idle = new OutboxRelay(outbox, kafka, nothing, Clock.fixed(NOW, ZoneOffset.UTC), 50,
-            Duration.ofSeconds(1), Duration.ofDays(7), MAX_ATTEMPTS);
+            Duration.ofSeconds(1), Duration.ofDays(7), PARK_AFTER);
 
         assertThat(idle.relayOnce()).isZero();
         assertThat(idle.purgePublished()).isZero();
@@ -193,44 +192,73 @@ class OutboxRelayTest {
     }
 
     @Test
-    void aRetryableFailureThatReachesTheAttemptCapParksTheRowAndTheBatchContinues() {
+    void twentyRetryableFailuresInARowDoNotParkTheRow() {
+        OutboxEventJpaEntity row = row("RISK-1");
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(row));
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenAnswer(call -> CompletableFuture.failedFuture(producerFailure(new NetworkException("broker down"))));
+
+        for (int run = 0; run < 20; run++) {
+            assertThat(relay.relayOnce()).isZero();
+        }
+
+        assertThat(row.getAttempts()).isEqualTo(20);
+        assertThat(row.getParkedAt()).as("retryable failures never count toward parking").isNull();
+        assertThat(row.getFirstFailedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void aRetryableFailureParksOnlyOnceTheRowHasFailedForLongerThanTheCeiling() {
         OutboxEventJpaEntity stuck = row("RISK-1");
         OutboxEventJpaEntity next = row("RISK-2");
-        stuck.markFailed("NetworkException");
-        stuck.markFailed("NetworkException");
         when(outbox.tryRelayLock(anyLong())).thenReturn(true);
         when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(stuck, next));
         when(kafka.send(any(ProducerRecord.class)))
             .thenReturn(CompletableFuture.failedFuture(producerFailure(new NetworkException("broker down"))))
+            .thenReturn(CompletableFuture.failedFuture(producerFailure(new NetworkException("broker down"))))
+            .thenReturn(CompletableFuture.failedFuture(producerFailure(new NetworkException("broker down"))))
             .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
 
-        assertThat(relay.relayOnce()).isEqualTo(1);
+        relayAt(NOW).relayOnce();
+        assertThat(relayAt(NOW.plus(PARK_AFTER)).relayOnce()).as("exactly at the ceiling: still retried").isZero();
+        assertThat(stuck.getParkedAt()).isNull();
 
-        assertThat(stuck.getAttempts()).isEqualTo(MAX_ATTEMPTS);
-        assertThat(stuck.getParkedAt()).isEqualTo(NOW);
-        assertThat(next.getPublishedAt()).isEqualTo(NOW);
+        Instant pastCeiling = NOW.plus(PARK_AFTER).plusSeconds(1);
+        assertThat(relayAt(pastCeiling).relayOnce()).isEqualTo(1);
+
+        assertThat(stuck.getFirstFailedAt()).as("measured from the first failure").isEqualTo(NOW);
+        assertThat(stuck.getParkedAt()).isEqualTo(pastCeiling);
+        assertThat(next.getPublishedAt()).as("the batch continues past the parked row").isEqualTo(pastCeiling);
     }
 
     @Test
-    void aRetryableFailureBelowTheCapIsNotParked() {
-        OutboxEventJpaEntity row = row("RISK-1");
-        row.markFailed("NetworkException");
+    void aPermanentFailureParksAtOnceAndRecordsWhenTheRowFirstFailed() {
+        OutboxEventJpaEntity poison = row("RISK-1");
         when(outbox.tryRelayLock(anyLong())).thenReturn(true);
-        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(row));
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(poison));
         when(kafka.send(any(ProducerRecord.class)))
-            .thenReturn(CompletableFuture.failedFuture(producerFailure(new NetworkException("broker down"))));
+            .thenReturn(CompletableFuture.failedFuture(producerFailure(new RecordTooLargeException("too large"))));
 
-        assertThat(relay.relayOnce()).isZero();
+        relay.relayOnce();
 
-        assertThat(row.getAttempts()).isEqualTo(MAX_ATTEMPTS - 1);
-        assertThat(row.getParkedAt()).isNull();
+        assertThat(poison.getAttempts()).isEqualTo(1);
+        assertThat(poison.getFirstFailedAt()).isEqualTo(NOW);
+        assertThat(poison.getParkedAt()).isEqualTo(NOW);
     }
 
     @Test
-    void theAttemptCapMustBePositive() {
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new OutboxRelay(outbox, kafka, transactions,
-                Clock.fixed(NOW, ZoneOffset.UTC), 50, Duration.ofSeconds(1), Duration.ofDays(7), 0))
-            .isInstanceOf(IllegalArgumentException.class);
+    void theRetryableCeilingMustBePositive() {
+        for (Duration invalid : List.of(Duration.ZERO, Duration.ofSeconds(-1))) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> new OutboxRelay(outbox, kafka, transactions,
+                    Clock.fixed(NOW, ZoneOffset.UTC), 50, Duration.ofSeconds(1), Duration.ofDays(7), invalid))
+                .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    private OutboxRelay relayAt(Instant now) {
+        return new OutboxRelay(outbox, kafka, transactions, Clock.fixed(now, ZoneOffset.UTC), 50,
+            Duration.ofSeconds(1), Duration.ofDays(7), PARK_AFTER);
     }
 
     /** What KafkaTemplate completes its future with when the producer reports a failure. */

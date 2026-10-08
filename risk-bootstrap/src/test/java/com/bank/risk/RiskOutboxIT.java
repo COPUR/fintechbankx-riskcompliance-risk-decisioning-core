@@ -209,7 +209,7 @@ class RiskOutboxIT {
             .andReturn().getResponse().getContentAsString()).get("assessmentId").asText();
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
-            Clock.systemUTC(), 10, Duration.ofSeconds(1), Duration.ofDays(7), 10);
+            Clock.systemUTC(), 10, Duration.ofSeconds(1), Duration.ofDays(7), Duration.ofHours(24));
 
         assertThat(relay.relayOnce()).isEqualTo(1);
         assertThat(relay.relayOnce()).isZero();
@@ -241,7 +241,7 @@ class RiskOutboxIT {
 
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), Clock.systemUTC(), 10,
-            Duration.ofSeconds(1), Duration.ofDays(7), 10).relayOnce();
+            Duration.ofSeconds(1), Duration.ofDays(7), Duration.ofHours(24)).relayOnce();
 
         ArgumentCaptor<ProducerRecord<String, String>> records = ArgumentCaptor.forClass(ProducerRecord.class);
         Mockito.verify(kafka).send(records.capture());
@@ -260,15 +260,16 @@ class RiskOutboxIT {
                 new RecordTooLargeException("too large"))))
             .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
-            Clock.systemUTC(), 10, Duration.ofSeconds(1), Duration.ofDays(7), 10);
+            Clock.systemUTC(), 10, Duration.ofSeconds(1), Duration.ofDays(7), Duration.ofHours(24));
 
         assertThat(relay.relayOnce()).isEqualTo(1);
         assertThat(relay.relayOnce()).as("the parked row is not picked up again").isZero();
 
         Mockito.verify(kafka, Mockito.times(2)).send(any(ProducerRecord.class));
-        Map<String, Object> parked = jdbc.queryForMap("select o.parked_at, o.last_error, o.attempts from " + OUTBOX
+        Map<String, Object> parked = jdbc.queryForMap("select o.parked_at, o.first_failed_at, o.last_error, o.attempts from " + OUTBOX
             + " o where o.payload -> 'data' ->> 'transactionId' = 'PAY-PARK-1'");
         assertThat(parked.get("parked_at")).isNotNull();
+        assertThat(parked.get("first_failed_at")).isNotNull();
         assertThat((String) parked.get("last_error")).startsWith("RecordTooLargeException");
         assertThat(parked.get("attempts")).isEqualTo(1);
         assertThat(jdbc.queryForObject("select count(*) from " + OUTBOX
@@ -278,10 +279,23 @@ class RiskOutboxIT {
         assertThat(outbox.countByPublishedAtIsNullAndParkedAtIsNull()).isZero();
 
         // Manual replay (runbook): un-park and reset the attempts; the next run publishes it.
-        jdbc.update("update " + OUTBOX + " set parked_at = null, attempts = 0, last_error = null where parked_at is not null");
+        jdbc.update("update " + OUTBOX + " set parked_at = null, first_failed_at = null, attempts = 0, last_error = null"
+            + " where parked_at is not null");
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         assertThat(relay.relayOnce()).isEqualTo(1);
         assertThat(outbox.countByPublishedAtIsNull()).isZero();
+    }
+
+    @Test
+    void theOldestPendingAgeIsZeroWhenNothingWaitsAndGrowsWithTheOldestUnsentRow() throws Exception {
+        assertThat(outbox.oldestPendingAgeSeconds()).isZero();
+
+        assess("PAY-AGE-1", "10.00").andExpect(status().isCreated());
+        jdbc.update("update " + OUTBOX + " set created_at = now() - interval '2 hours'");
+
+        assertThat(outbox.oldestPendingAgeSeconds()).isBetween(7200.0, 7300.0);
+        jdbc.update("update " + OUTBOX + " set parked_at = now()");
+        assertThat(outbox.oldestPendingAgeSeconds()).as("parked rows are counted by outbox.parked.events instead").isZero();
     }
 
     private void awaitLockWait() throws InterruptedException {

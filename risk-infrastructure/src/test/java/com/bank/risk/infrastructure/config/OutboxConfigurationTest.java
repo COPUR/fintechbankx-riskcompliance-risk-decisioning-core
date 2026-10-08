@@ -34,6 +34,17 @@ class OutboxConfigurationTest {
     }
 
     @Test
+    void oldestPendingAgeGaugeIsExportedInSecondsForThisService() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        when(outbox.oldestPendingAgeSeconds()).thenReturn(90.5);
+
+        configuration.riskOutboxOldestPendingAgeGauge(registry, outbox);
+
+        Gauge gauge = registry.get("outbox.oldest.pending.age.seconds").tag("service", "svc-rsk-decisioning").gauge();
+        assertThat(gauge.value()).isEqualTo(90.5);
+    }
+
+    @Test
     void parkedGaugeIsExportedAsOutboxParkedEventsForThisService() {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         when(outbox.countByPublishedAtIsNullAndParkedAtIsNotNull()).thenReturn(2L);
@@ -56,7 +67,7 @@ class OutboxConfigurationTest {
         OutboxConfiguration.RelayConfiguration relayConfiguration = new OutboxConfiguration.RelayConfiguration();
 
         OutboxRelay relay = relayConfiguration.outboxRelay(outbox, mock(KafkaTemplate.class),
-            mock(PlatformTransactionManager.class), Clock.systemUTC(), 100, Duration.ofSeconds(10), Duration.ofDays(7), 10);
+            mock(PlatformTransactionManager.class), Clock.systemUTC(), 100, Duration.ofSeconds(10), Duration.ofDays(7), Duration.ofHours(24));
 
         assertThat(relay).isNotNull();
         assertThat(relayConfiguration.relaySchedule(relay)).isNotNull();
