@@ -92,6 +92,29 @@ jobs:
         with:
           node-version: '22'
 
+      - name: TDD gate - production changes need test changes (ADR-029)
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          NO_BEHAVIOUR_CHANGE: ${{ contains(github.event.pull_request.labels.*.name, 'no-behaviour-change') }}
+        shell: bash
+        run: |
+          if [ "$NO_BEHAVIOUR_CHANGE" = "true" ]; then
+            echo "Label no-behaviour-change is set; TDD gate skipped."
+            exit 0
+          fi
+          git fetch --no-tags origin "$BASE_REF"
+          changed="$(git diff --name-only "origin/${BASE_REF}...HEAD")"
+          main_changes="$(printf '%s\n' "$changed" | grep -E '(^|/)src/main/' || true)"
+          test_changes="$(printf '%s\n' "$changed" | grep -E '(^|/)src/test/' || true)"
+          if [ -n "$main_changes" ] && [ -z "$test_changes" ]; then
+            echo "This PR changes production code without touching any test:"
+            printf '%s\n' "$main_changes"
+            echo "Add or change a test (test first, ADR-029), or label the PR no-behaviour-change."
+            exit 1
+          fi
+          echo "TDD gate passed."
+
       - name: Run tests and coverage gates
         shell: bash
         run: |
@@ -162,14 +185,17 @@ jobs:
       - name: Guardrail - disallow generic map request payloads
         shell: bash
         run: |
-          if [ -d src/main/java ]; then
-            if grep -R -nE "Map<\s*String\s*,\s*Object\s*>" src/main/java --include="*Controller.java"; then
-              echo "Generic Map<String,Object> payloads are disallowed in controllers."
-              exit 1
-            fi
-          else
-            echo "No Java controller sources in this repository; guardrail check skipped."
+          # Every module's main sources (risk-*/src/main/java), not only a root src/main/java.
+          mapfile -t roots < <(find . -path '*/src/main/java' -type d -not -path './legacy/*' -not -path '*/build/*')
+          if [ "${#roots[@]}" -eq 0 ]; then
+            echo "No Java sources in this repository; guardrail check skipped."
+            exit 0
           fi
+          if grep -R -nE "Map<\s*String\s*,\s*Object\s*>" "${roots[@]}" --include="*Controller.java"; then
+            echo "Generic Map<String,Object> payloads are disallowed in controllers."
+            exit 1
+          fi
+          echo "Checked controllers under: ${roots[*]}"
 
   security:
     name: ci/security
