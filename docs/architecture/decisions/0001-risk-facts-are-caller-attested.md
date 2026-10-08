@@ -56,6 +56,16 @@ stated. A decision log that hides this would overstate what risk checked.
    (5000.00 is not). The score stays v2's; the pattern decides. This needs the
    caller-stated `paymentType` (the monolith's PaymentType values), which is
    required and fails closed like decision 1.
+7. The monolith's other payment refusals (`isValidPayment`: score above 80,
+   amount above 100000, same account) are not ported. Same account is refused
+   by payments before risk is called. Every USD amount above 50000 already
+   scores 50 here, which is `REVIEW`, and payments refuses any decision other
+   than `ALLOW`. So nothing the monolith refused gets through. The service is
+   deliberately stricter: the monolith accepted 50000 < amount <= 100000 by day
+   for a non-wire, non-round payment, and here that amount goes to manual
+   review instead. Regression records this as an intentional rule owned by
+   risk. Its night and wire-transfer score additions change no outcome that
+   is not already refused, so they are not ported either.
 
 ## Consequences
 
