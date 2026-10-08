@@ -37,7 +37,7 @@ import java.util.concurrent.TimeUnit;
  *   failures and any unclassified exception: the batch stops without marking
  *   the row or anything after it, and the relay retries with exponential
  *   backoff. Such a row is never skipped or parked; the failure shows in
- *   outbox.publish.failures and outbox.oldest.pending.age.seconds.</li>
+ *   outbox.send.failures and outbox.oldest.pending.age.seconds.</li>
  * </ul>
  * An operator can park a row stuck on a non-payload error by hand (runbook
  * "Parked outbox events"); parked rows are skipped until replayed.
@@ -50,7 +50,7 @@ public class OutboxRelay {
     // Distinct per service (customer uses "cus_out"), so relays of services that
     // ever share a Postgres cluster never block each other.
     static final long RELAY_LOCK_KEY = 0x72736B5F6F7574L; // "rsk_out"
-    static final String PUBLISH_FAILURES = "outbox.publish.failures";
+    static final String SEND_FAILURES = "outbox.send.failures";
     private static final Logger log = LoggerFactory.getLogger(OutboxRelay.class);
 
     private final SpringDataOutboxRepository outbox;
@@ -70,7 +70,7 @@ public class OutboxRelay {
     /**
      * @param backoffBase first wait after a stopped batch (the poll interval); doubles per stopped run
      * @param backoffCap  longest wait between attempts
-     * @param registry    receives outbox.publish.failures{service, exception}
+     * @param registry    receives outbox.send.failures{service, exception}
      */
     public OutboxRelay(SpringDataOutboxRepository outbox, KafkaTemplate<String, String> kafka,
                        TransactionTemplate transactions, Clock clock, int batchSize,
@@ -157,9 +157,9 @@ public class OutboxRelay {
     }
 
     private void countFailure(Throwable failure) {
-        Counter.builder(PUBLISH_FAILURES)
+        // One tag only; app and squad are common tags (management.metrics.tags).
+        Counter.builder(SEND_FAILURES)
             .description("Outbox rows Kafka did not accept, by exception class")
-            .tag("service", RiskEventEnvelopeFactory.PRODUCER)
             .tag("exception", underlying(failure).getClass().getSimpleName())
             .register(registry)
             .increment();

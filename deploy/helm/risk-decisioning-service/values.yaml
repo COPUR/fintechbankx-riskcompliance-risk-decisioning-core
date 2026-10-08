@@ -62,6 +62,10 @@ config:
   # required for internal client-credentials calls (mesh mTLS, platform contract).
   SERVICE_CALLERS: svc-pay-initiation-settlement
 
+# Owning squad, the squad tag on every metric (platform alert routing).
+metrics:
+  squad: risk
+
 # Database credential, synced from AWS Secrets Manager by External Secrets Operator.
 externalSecret:
   enabled: true

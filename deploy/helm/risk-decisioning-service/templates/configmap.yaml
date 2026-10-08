@@ -11,3 +11,6 @@ data:
   {{- range $key, $value := .Values.config }}
   {{ $key }}: {{ $value | quote }}
   {{- end }}
+  # Common metric tags (platform outbox alert rules): app = service account, squad = owning squad.
+  METRICS_APP: {{ .Values.serviceAccount.name | quote }}
+  METRICS_SQUAD: {{ required "metrics.squad is required" .Values.metrics.squad | quote }}

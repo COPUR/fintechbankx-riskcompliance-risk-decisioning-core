@@ -1,10 +1,10 @@
 -- Outbox rows that can never be sent are parked instead of blocking every
--- later event. OutboxRelay parks a row when Kafka refuses it permanently
--- (RecordTooLarge, Serialization, InvalidTopic, TopicAuthorization, any error
--- that is not retriable) or when it has failed risk.outbox.relay.max-attempts
--- times. Parked rows are skipped by the relay, never purged, counted by the
--- outbox_parked_events gauge, and replayed by hand (runbook "Parked outbox
--- events"). last_error (V3) keeps the reason.
+-- later event (ADR-021 decision 4). OutboxRelay parks a row only on a payload
+-- error (RecordTooLarge, Serialization, InvalidTopic); every other failure
+-- stops the batch without marking the row and is retried with backoff. An
+-- operator may also park a row by hand. Parked rows are skipped by the relay,
+-- never purged, counted by the outbox_parked_events gauge, and replayed by
+-- hand (runbook "Parked outbox events"). last_error (V3) keeps the reason.
 
 ALTER TABLE outbox_event ADD COLUMN parked_at TIMESTAMPTZ;
 

@@ -93,6 +93,9 @@ management:
   metrics:
     tags:
       service: svc-rsk-decisioning
+      # Platform alert rules select on these (the chart sets both from its values).
+      app: ${METRICS_APP:risk-decisioning-service}
+      squad: ${METRICS_SQUAD:risk}
     distribution:
       percentiles-histogram:
         http.server.requests: true

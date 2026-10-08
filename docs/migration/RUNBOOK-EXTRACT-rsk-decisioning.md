@@ -64,9 +64,13 @@ The backfill is independent of the other contexts' backfills and can be re-run u
 An outage or a credential problem therefore only delays events: fix the cause (the relay's WARN log names the
 exception) and the relay catches up by itself. `first_failed_at` (V6) is no longer written.
 
-Alerts:
-- `outbox_oldest_pending_age_seconds`: age of the oldest row waiting for the relay; the signal for a stalled relay,
-  an outage or a broken credential.
+Alerts (owning squad: risk, the Risk and Compliance Decisioning Squad; every meter carries the common tags
+`app="risk-decisioning-service"` and `squad="risk"`):
+- Stalled relay, outage or broken credential, page after 15 minutes:
+  `outbox_oldest_pending_age_seconds{app="risk-decisioning-service", squad="risk"} > 900`
+  (age of the oldest row waiting for the relay, from `created_at`). `outbox_send_failures_total{exception=...}`
+  shows why. The alert rule lives in the platform observability repository (one rule per service, built on these
+  names); this chart ships no PrometheusRule.
 - `outbox_parked_events{service="svc-rsk-decisioning"}`: alert on any value above zero, because consumers are
   missing those decisions until they are replayed.
 

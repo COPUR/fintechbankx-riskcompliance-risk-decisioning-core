@@ -1,8 +1,7 @@
--- Retryable send failures (broker, DNS or mesh-egress outages) no longer count
--- toward parking; V4's max-attempts cap is removed. A row is parked on a
--- retryable failure only after it has been failing continuously for longer
--- than risk.outbox.relay.retryable-park-after (default 24 h), measured from
--- first_failed_at. Non-retriable failures still park at once.
+-- first_failed_at: when a row's sends started failing. Not written by the
+-- relay under ADR-021 decision 4 (a non-payload failure marks nothing on the
+-- row, and the oldest-pending-age gauge reads created_at); kept as a nullable
+-- column that the replay SQL resets.
 
 ALTER TABLE outbox_event ADD COLUMN first_failed_at TIMESTAMPTZ;
 
