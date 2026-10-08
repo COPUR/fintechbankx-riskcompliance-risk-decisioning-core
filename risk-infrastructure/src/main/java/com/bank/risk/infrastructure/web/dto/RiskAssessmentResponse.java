@@ -1,4 +1,4 @@
-package com.bank.risk.application.dto;
+package com.bank.risk.infrastructure.web.dto;
 
 import com.bank.risk.domain.RiskAssessment;
 

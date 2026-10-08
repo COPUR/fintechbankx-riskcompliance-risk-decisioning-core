@@ -1,7 +1,7 @@
 package com.bank.risk.infrastructure.web;
 
-import com.bank.risk.application.dto.EvaluateRiskRequest;
-import com.bank.risk.application.dto.RiskAssessmentResponse;
+import com.bank.risk.infrastructure.web.dto.EvaluateRiskRequest;
+import com.bank.risk.infrastructure.web.dto.RiskAssessmentResponse;
 import com.bank.risk.domain.port.in.RiskAssessmentUseCase;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
