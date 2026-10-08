@@ -14,7 +14,7 @@ class RiskPolicyServiceTest {
 
     @Test
     void shouldAllowLowRiskTransaction() {
-        var command = new RiskEvaluationCommand("TX-LOW", new BigDecimal("100"), "AED", false, 5);
+        var command = new RiskEvaluationCommand("TX-LOW", new BigDecimal("100"), "AED", false, 5, "svc-pay-initiation-settlement");
 
         var assessment = service.evaluate(command);
 
@@ -24,7 +24,7 @@ class RiskPolicyServiceTest {
 
     @Test
     void shouldRequireReviewForMediumRiskTransaction() {
-        var command = new RiskEvaluationCommand("TX-REV", new BigDecimal("12000"), "AED", false, 70);
+        var command = new RiskEvaluationCommand("TX-REV", new BigDecimal("12000"), "AED", false, 70, "svc-pay-initiation-settlement");
 
         var assessment = service.evaluate(command);
 
@@ -34,7 +34,7 @@ class RiskPolicyServiceTest {
 
     @Test
     void shouldBlockForHighRiskSignals() {
-        var command = new RiskEvaluationCommand("TX-BLOCK", new BigDecimal("60000"), "AED", true, 80);
+        var command = new RiskEvaluationCommand("TX-BLOCK", new BigDecimal("60000"), "AED", true, 80, "svc-pay-initiation-settlement");
 
         var assessment = service.evaluate(command);
 

@@ -16,7 +16,7 @@ class InMemoryRiskAssessmentRepositoryTest {
 
     @Test
     void shouldSaveAndFindByTransactionId() {
-        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("10"), "AED", false, 0), 20, RiskDecision.ALLOW, List.of());
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("10"), "AED", false, 0, "svc-pay-initiation-settlement"), 20, RiskDecision.ALLOW, List.of());
 
         repository.save(assessment);
 

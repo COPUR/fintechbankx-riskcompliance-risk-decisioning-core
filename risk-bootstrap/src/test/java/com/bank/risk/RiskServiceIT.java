@@ -80,10 +80,29 @@ class RiskServiceIT {
         assertThat(jdbc.queryForObject("select count(*) from sc_rsk_decisioning.risk_assessment", Integer.class)).isEqualTo(1);
         assertThat(jdbc.queryForObject("select reasons::text from sc_rsk_decisioning.risk_assessment", String.class))
             .contains("HIGH_AMOUNT", "VERY_HIGH_AMOUNT", "HIGH_RISK_COUNTRY", "HIGH_VELOCITY");
+        assertThat(jdbc.queryForMap("select attestation_source, attested_by from sc_rsk_decisioning.risk_assessment"))
+            .containsEntry("attestation_source", "CALLER_ATTESTED")
+            .containsEntry("attested_by", "svc-pay-initiation-settlement");
 
         mvc.perform(asService(get("/api/v1/risk/assessments/{id}", "PAY-RISK-1")))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.decision").value("BLOCK"));
+    }
+
+    @Test
+    void aStaffAssessmentIsAttestedByTheStaffMembersSubject() throws Exception {
+        mvc.perform(post("/api/v1/risk/assess")
+                .header("x-fapi-interaction-id", "it-interaction-1")
+                .with(jwt().jwt(j -> j.subject("staff-1").claim("azp", "fintechbankx-web"))
+                    .authorities(new SimpleGrantedAuthority("ROLE_BANKER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body("PAY-RISK-STAFF", "10.00", false, 0)))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.attestationSource").value("CALLER_ATTESTED"))
+            .andExpect(jsonPath("$.attestedBy").value("staff-1"));
+
+        assertThat(jdbc.queryForObject("select attested_by from sc_rsk_decisioning.risk_assessment "
+            + "where transaction_id = 'PAY-RISK-STAFF'", String.class)).isEqualTo("staff-1");
     }
 
     @Test

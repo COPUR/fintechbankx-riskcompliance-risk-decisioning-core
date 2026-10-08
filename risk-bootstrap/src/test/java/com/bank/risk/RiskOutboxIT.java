@@ -151,8 +151,9 @@ class RiskOutboxIT {
             winner.setAutoCommit(false);
             try (Statement insert = winner.createStatement()) {
                 insert.executeUpdate("insert into " + ASSESSMENTS + " (assessment_id, transaction_id, amount, currency, "
-                    + "high_risk_country, velocity_score, score, decision, reasons, assessed_at) values ('RISK-RACE-WINNER', "
-                    + "'PAY-RACE-1', 100.00, 'AED', true, 80, 70, 'REVIEW', '[\"HIGH_RISK_COUNTRY\",\"HIGH_VELOCITY\"]'::jsonb, now())");
+                    + "high_risk_country, velocity_score, score, decision, reasons, assessed_at, attestation_source, attested_by) "
+                    + "values ('RISK-RACE-WINNER', 'PAY-RACE-1', 100.00, 'AED', true, 80, 70, 'REVIEW', "
+                    + "'[\"HIGH_RISK_COUNTRY\",\"HIGH_VELOCITY\"]'::jsonb, now(), 'CALLER_ATTESTED', 'svc-pay-initiation-settlement')");
             }
             // The loser cannot see the uncommitted winner, evaluates, and blocks on the unique index.
             loser = LOSER.submit(() -> assess("PAY-RACE-1", "100.00").andReturn());
@@ -184,7 +185,7 @@ class RiskOutboxIT {
             new TransactionTemplate(transactionManager), new TransactionTemplate(transactionManager));
 
         assertThatThrownBy(() -> withFailingOutbox.assess(
-            new RiskEvaluationCommand("PAY-ROLLBACK-1", new BigDecimal("15000.00"), "AED", true, 0)))
+            new RiskEvaluationCommand("PAY-ROLLBACK-1", new BigDecimal("15000.00"), "AED", true, 0, "svc-pay-initiation-settlement")))
             .isInstanceOf(IllegalStateException.class);
 
         assertThat(count(ASSESSMENTS)).isZero();
@@ -193,7 +194,7 @@ class RiskOutboxIT {
 
     @Test
     void theOutboxRefusesToWriteOutsideATransaction() {
-        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("PAY-NO-TX", new BigDecimal("1.00"), "AED", false, 0), 0,
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("PAY-NO-TX", new BigDecimal("1.00"), "AED", false, 0, "svc-pay-initiation-settlement"), 0,
             RiskDecision.ALLOW, List.of());
 
         assertThatThrownBy(() -> publisher.publish(assessment.getDomainEvents()))
@@ -227,7 +228,7 @@ class RiskOutboxIT {
     void theRequestTraceIsStoredWithTheEventAndSentAsTraceparent() {
         String traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
         RiskAssessment assessment = RiskAssessment.create(
-            new RiskEvaluationCommand("PAY-TRACE-1", new BigDecimal("20.00"), "AED", false, 0), 0, RiskDecision.ALLOW, List.of());
+            new RiskEvaluationCommand("PAY-TRACE-1", new BigDecimal("20.00"), "AED", false, 0, "svc-pay-initiation-settlement"), 0, RiskDecision.ALLOW, List.of());
         MDC.put("traceId", "4bf92f3577b34da6a3ce929d0e0e4736");
         MDC.put("spanId", "00f067aa0ba902b7");
         try {

@@ -14,7 +14,7 @@ class RiskAssessmentResponseTest {
 
     @Test
     void shouldMapFromDomain() {
-        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("50"), "AED", false, 0),
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("50"), "AED", false, 0, "svc-pay-initiation-settlement"),
                 25,
                 RiskDecision.ALLOW,
                 List.of("COMPLIANT")
@@ -25,5 +25,7 @@ class RiskAssessmentResponseTest {
         assertThat(response.assessmentId()).isEqualTo(assessment.getId().getValue());
         assertThat(response.transactionId()).isEqualTo("TX-1");
         assertThat(response.decision()).isEqualTo("ALLOW");
+        assertThat(response.attestationSource()).isEqualTo("CALLER_ATTESTED");
+        assertThat(response.attestedBy()).isEqualTo("svc-pay-initiation-settlement");
     }
 }

@@ -23,7 +23,7 @@ class RiskEventEnvelopeFactoryTest {
     private final RiskEventEnvelopeFactory factory = new RiskEventEnvelopeFactory(json);
 
     private static RiskAssessment blocked() {
-        return RiskAssessment.create(new RiskEvaluationCommand("PAY-ENV-1", new BigDecimal("60000.5"), "AED", false, 0), 100, RiskDecision.BLOCK,
+        return RiskAssessment.create(new RiskEvaluationCommand("PAY-ENV-1", new BigDecimal("60000.5"), "AED", false, 0, "svc-pay-initiation-settlement"), 100, RiskDecision.BLOCK,
             List.of("HIGH_AMOUNT", "VERY_HIGH_AMOUNT", "HIGH_RISK_COUNTRY", "HIGH_VELOCITY"));
     }
 
@@ -78,7 +78,7 @@ class RiskEventEnvelopeFactoryTest {
 
     @Test
     void largeAmountsAreNeverWrittenInScientificNotation() throws Exception {
-        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("PAY-ENV-2", new BigDecimal("1E+6"), "AED", false, 0), 50,
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("PAY-ENV-2", new BigDecimal("1E+6"), "AED", false, 0, "svc-pay-initiation-settlement"), 50,
             RiskDecision.REVIEW, List.of("HIGH_AMOUNT", "VERY_HIGH_AMOUNT"));
 
         JsonNode data = json.readTree(factory.toOutboxRow(assessment.getDomainEvents().getFirst(), "c", null).getPayload())

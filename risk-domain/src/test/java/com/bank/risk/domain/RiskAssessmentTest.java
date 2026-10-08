@@ -13,7 +13,7 @@ class RiskAssessmentTest {
 
     @Test
     void shouldCreateAssessmentAndExposeBehavior() {
-        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("500"), "AED", false, 0),
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("500"), "AED", false, 0, "svc-pay-initiation-settlement"),
                 55,
                 RiskDecision.REVIEW,
                 List.of("MEDIUM_VELOCITY")
@@ -27,12 +27,22 @@ class RiskAssessmentTest {
     }
 
     @Test
+    void aNewDecisionRecordsThatItRestsOnCallerAttestedFactsAndWhoAttestedThem() {
+        RiskAssessment assessment = RiskAssessment.create(
+                new RiskEvaluationCommand("PAY-9", new BigDecimal("9000.00"), "USD", false, 0, "svc-pay-initiation-settlement"),
+                0, RiskDecision.ALLOW, List.of());
+
+        assertThat(assessment.getAttestationSource()).isEqualTo(AttestationSource.CALLER_ATTESTED);
+        assertThat(assessment.getAttestedBy()).isEqualTo("svc-pay-initiation-settlement");
+    }
+
+    @Test
     void shouldRejectInvalidScoreAndIdentifiers() {
-        assertThatThrownBy(() -> RiskAssessment.create(new RiskEvaluationCommand("", new BigDecimal("10"), "AED", false, 0), 10, RiskDecision.ALLOW, List.of()))
+        assertThatThrownBy(() -> RiskAssessment.create(new RiskEvaluationCommand("", new BigDecimal("10"), "AED", false, 0, "svc-pay-initiation-settlement"), 10, RiskDecision.ALLOW, List.of()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("transactionId");
 
-        assertThatThrownBy(() -> RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("10"), "AED", false, 0), 101, RiskDecision.BLOCK, List.of("x")))
+        assertThatThrownBy(() -> RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("10"), "AED", false, 0, "svc-pay-initiation-settlement"), 101, RiskDecision.BLOCK, List.of("x")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("score");
     }

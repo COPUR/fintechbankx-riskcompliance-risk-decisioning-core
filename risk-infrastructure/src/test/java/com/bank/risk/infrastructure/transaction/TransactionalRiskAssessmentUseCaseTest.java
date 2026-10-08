@@ -28,11 +28,11 @@ class TransactionalRiskAssessmentUseCaseTest {
         delegate, new TransactionTemplate(transactions), readOnly(transactions));
 
     private static final RiskEvaluationCommand COMMAND =
-        new RiskEvaluationCommand("PAY-TX-1", new BigDecimal("100.00"), "AED", false, 0);
+        new RiskEvaluationCommand("PAY-TX-1", new BigDecimal("100.00"), "AED", false, 0, "svc-pay-initiation-settlement");
 
     @Test
     void anAssessmentCommitsInOneReadWriteTransaction() {
-        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("PAY-TX-1", new BigDecimal("100.00"), "AED", false, 0), 0,
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("PAY-TX-1", new BigDecimal("100.00"), "AED", false, 0, "svc-pay-initiation-settlement"), 0,
             RiskDecision.ALLOW, List.of());
         when(delegate.assess(COMMAND)).thenAnswer(invocation -> {
             transactions.log.add("assess");

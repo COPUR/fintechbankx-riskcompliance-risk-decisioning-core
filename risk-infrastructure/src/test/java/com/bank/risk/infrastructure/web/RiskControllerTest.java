@@ -9,6 +9,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.mockito.ArgumentCaptor;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -34,12 +38,52 @@ class RiskControllerTest {
     void setUp() {
         service = mock(RiskAssessmentUseCase.class);
         mockMvc = MockMvcBuilders.standaloneSetup(new RiskController(service))
-                .setControllerAdvice(new ApiExceptionHandler()).build();
+                .setControllerAdvice(new ApiExceptionHandler())
+                .defaultRequest(get("/").principal(serviceToken()))
+                .build();
+    }
+
+    private static JwtAuthenticationToken serviceToken() {
+        return token("service-account-payments", "svc-pay-initiation-settlement", "ROLE_SERVICE");
+    }
+
+    private static JwtAuthenticationToken token(String subject, String azp, String role) {
+        Jwt.Builder jwt = Jwt.withTokenValue("t").header("alg", "none").subject(subject);
+        if (azp != null) {
+            jwt.claim("azp", azp);
+        }
+        return new JwtAuthenticationToken(jwt.build(), List.of(new SimpleGrantedAuthority(role)), subject);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource(delimiter = '|', value = {
+        "service client is attested by its azp | service-account-payments | svc-pay-initiation-settlement | ROLE_SERVICE | svc-pay-initiation-settlement",
+        "staff member is attested by subject   | staff-42                 | fintechbankx-web              | ROLE_BANKER  | staff-42"
+    })
+    void theCallerWhoStatedTheRiskFactsIsPassedInTheCommandAndReturned(String name, String subject, String azp,
+                                                                     String role, String attestedBy) throws Exception {
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-7", new BigDecimal("10"), "USD",
+                false, 0, attestedBy), 0, RiskDecision.ALLOW, List.of());
+        when(service.assess(any(RiskEvaluationCommand.class))).thenReturn(assessment);
+
+        mockMvc.perform(post("/api/v1/risk/assess")
+                        .principal(token(subject, azp, role))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {"transactionId":"TX-7","amount":10,"currency":"USD","highRiskCountry":false,"velocityScore":0}
+                        """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.attestationSource").value("CALLER_ATTESTED"))
+                .andExpect(jsonPath("$.attestedBy").value(attestedBy));
+
+        ArgumentCaptor<RiskEvaluationCommand> command = ArgumentCaptor.forClass(RiskEvaluationCommand.class);
+        org.mockito.Mockito.verify(service).assess(command.capture());
+        org.assertj.core.api.Assertions.assertThat(command.getValue().attestedBy()).isEqualTo(attestedBy);
     }
 
     @Test
     void shouldAssessRisk() throws Exception {
-        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("200"), "AED", false, 0), 60, RiskDecision.REVIEW, List.of("HIGH_AMOUNT"));
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("200"), "AED", false, 0, "svc-pay-initiation-settlement"), 60, RiskDecision.REVIEW, List.of("HIGH_AMOUNT"));
         when(service.assess(any(RiskEvaluationCommand.class))).thenReturn(assessment);
 
         mockMvc.perform(post("/api/v1/risk/assess")
@@ -54,7 +98,7 @@ class RiskControllerTest {
 
     @Test
     void shouldReturnAssessmentByTransactionId() throws Exception {
-        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-2", new BigDecimal("100"), "AED", false, 0), 10, RiskDecision.ALLOW, List.of("COMPLIANT"));
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-2", new BigDecimal("100"), "AED", false, 0, "svc-pay-initiation-settlement"), 10, RiskDecision.ALLOW, List.of("COMPLIANT"));
         when(service.findByTransactionId("TX-2")).thenReturn(Optional.of(assessment));
         when(service.findByTransactionId("TX-404")).thenReturn(Optional.empty());
 
