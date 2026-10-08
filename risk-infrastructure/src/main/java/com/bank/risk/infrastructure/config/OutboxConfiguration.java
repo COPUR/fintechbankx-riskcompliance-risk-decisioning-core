@@ -72,7 +72,7 @@ public class OutboxConfiguration {
     @Bean
     Gauge riskOutboxParkedGauge(MeterRegistry registry, SpringDataOutboxRepository outbox) {
         return Gauge.builder(PARKED_GAUGE, outbox, SpringDataOutboxRepository::countByPublishedAtIsNullAndParkedAtIsNotNull)
-            .description("Risk events the outbox relay parked after a permanent failure or too many attempts")
+            .description("Risk events parked on a payload error or by an operator; replay by hand")
             .tag("service", RiskEventEnvelopeFactory.PRODUCER)
             .register(registry);
     }
