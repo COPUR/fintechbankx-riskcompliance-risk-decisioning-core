@@ -1,5 +1,7 @@
 package com.bank.risk.infrastructure.outbox;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.errors.InvalidTopicException;
 import org.apache.kafka.common.errors.RecordTooLargeException;
@@ -51,6 +53,7 @@ public class OutboxRelay {
     // Distinct per service (customer uses "cus_out"), so relays of services that
     // ever share a Postgres cluster never block each other.
     static final long RELAY_LOCK_KEY = 0x72736B5F6F7574L; // "rsk_out"
+    static final String PUBLISH_FAILURES = "outbox.publish.failures";
     private static final Logger log = LoggerFactory.getLogger(OutboxRelay.class);
 
     private final SpringDataOutboxRepository outbox;
@@ -61,10 +64,26 @@ public class OutboxRelay {
     private final Duration sendTimeout;
     private final Duration retention;
     private final Duration retryableParkAfter;
+    private final Duration backoffBase;
+    private final Duration backoffCap;
+    private final MeterRegistry registry;
+    /** Consecutive runs that stopped on a failure; 0 after a run that did not stop. */
+    private int stoppedRuns;
+    private Instant nextAttemptAt;
 
+    /**
+     * @param backoffBase first wait after a stopped batch (the poll interval); doubles per stopped run
+     * @param backoffCap  longest wait between attempts
+     * @param registry    receives outbox.publish.failures{service, exception}
+     */
     public OutboxRelay(SpringDataOutboxRepository outbox, KafkaTemplate<String, String> kafka,
                        TransactionTemplate transactions, Clock clock, int batchSize,
-                       Duration sendTimeout, Duration retention, Duration retryableParkAfter) {
+                       Duration sendTimeout, Duration retention, Duration retryableParkAfter,
+                       Duration backoffBase, Duration backoffCap, MeterRegistry registry) {
+        if (backoffBase == null || backoffBase.isZero() || backoffBase.isNegative()
+                || backoffCap == null || backoffCap.compareTo(backoffBase) < 0) {
+            throw new IllegalArgumentException("relay backoff must be positive, with max-backoff not below the base");
+        }
         if (retryableParkAfter == null || retryableParkAfter.isZero() || retryableParkAfter.isNegative()) {
             throw new IllegalArgumentException("risk.outbox.relay.retryable-park-after must be positive");
         }
@@ -76,12 +95,19 @@ public class OutboxRelay {
         this.sendTimeout = sendTimeout;
         this.retention = retention;
         this.retryableParkAfter = retryableParkAfter;
+        this.backoffBase = backoffBase;
+        this.backoffCap = backoffCap;
+        this.registry = registry;
     }
 
     /**
      * @return number of events published in this run
      */
-    public int relayOnce() {
+    public synchronized int relayOnce() {
+        if (nextAttemptAt != null && clock.instant().isBefore(nextAttemptAt)) {
+            return 0; // backing off after a stopped batch; not even the lock is taken
+        }
+        boolean[] stopped = {false};
         Integer published = transactions.execute(status -> {
             if (!outbox.tryRelayLock(RELAY_LOCK_KEY)) {
                 return 0;
@@ -95,14 +121,18 @@ public class OutboxRelay {
                     sent++;
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
+                    countFailure(e);
                     row.markFailed("interrupted");
+                    stopped[0] = true;
                     break;
                 } catch (Exception e) {
                     Instant now = clock.instant();
+                    countFailure(e);
                     row.markFailed(describe(e), now);
                     if (!isPayloadSpecific(e) && !now.isAfter(row.getFirstFailedAt().plus(retryableParkAfter))) {
                         log.warn("Outbox relay could not publish event {} to {} (attempt {}, failing since {}); will retry",
                             row.getEventId(), row.getTopic(), row.getAttempts(), row.getFirstFailedAt(), e);
+                        stopped[0] = true;
                         break;
                     }
                     row.park(now);
@@ -112,7 +142,35 @@ public class OutboxRelay {
             }
             return sent;
         });
+        scheduleNextAttempt(stopped[0]);
         return published == null ? 0 : published;
+    }
+
+    /** Exponential backoff after a stopped batch (base, 2 x base, ... up to the cap); reset by any other run. */
+    private void scheduleNextAttempt(boolean stopped) {
+        if (!stopped) {
+            stoppedRuns = 0;
+            nextAttemptAt = null;
+            return;
+        }
+        stoppedRuns++;
+        Duration wait = backoffCap;
+        if (stoppedRuns <= 30) {
+            Duration doubled = backoffBase.multipliedBy(1L << (stoppedRuns - 1));
+            if (doubled.compareTo(backoffCap) < 0) {
+                wait = doubled;
+            }
+        }
+        nextAttemptAt = clock.instant().plus(wait);
+    }
+
+    private void countFailure(Throwable failure) {
+        Counter.builder(PUBLISH_FAILURES)
+            .description("Outbox rows Kafka did not accept, by exception class")
+            .tag("service", RiskEventEnvelopeFactory.PRODUCER)
+            .tag("exception", underlying(failure).getClass().getSimpleName())
+            .register(registry)
+            .increment();
     }
 
     public int purgePublished() {
@@ -136,13 +194,19 @@ public class OutboxRelay {
         return false;
     }
 
-    /** The underlying failure, without the future and KafkaTemplate wrappers, for last_error. */
-    static String describe(Throwable failure) {
+    /** The underlying failure, without the future and KafkaTemplate wrappers. */
+    static Throwable underlying(Throwable failure) {
         Throwable cause = failure;
         while ((cause instanceof ExecutionException || cause instanceof CompletionException
                 || cause instanceof KafkaProducerException) && cause.getCause() != null) {
             cause = cause.getCause();
         }
+        return cause;
+    }
+
+    /** The underlying failure as text, for last_error. */
+    static String describe(Throwable failure) {
+        Throwable cause = underlying(failure);
         return cause.getMessage() == null
             ? cause.getClass().getSimpleName()
             : cause.getClass().getSimpleName() + ": " + cause.getMessage();

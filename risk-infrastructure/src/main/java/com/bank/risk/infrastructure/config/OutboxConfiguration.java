@@ -96,9 +96,12 @@ public class OutboxConfiguration {
                                 @Value("${risk.outbox.relay.batch-size:100}") int batchSize,
                                 @Value("${risk.outbox.relay.send-timeout:PT35S}") Duration sendTimeout,
                                 @Value("${risk.outbox.retention:P7D}") Duration retention,
-                                @Value("${risk.outbox.relay.retryable-park-after:PT24H}") Duration retryableParkAfter) {
+                                @Value("${risk.outbox.relay.retryable-park-after:PT24H}") Duration retryableParkAfter,
+                                @Value("${risk.outbox.relay.interval:PT1S}") Duration backoffBase,
+                                @Value("${risk.outbox.relay.max-backoff:PT5M}") Duration backoffCap,
+                                MeterRegistry registry) {
             return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), clock, batchSize,
-                sendTimeout, retention, retryableParkAfter);
+                sendTimeout, retention, retryableParkAfter, backoffBase, backoffCap, registry);
         }
 
         @Bean

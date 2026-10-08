@@ -123,6 +123,9 @@ risk:
       # has been failing continuously for longer than this (from first_failed_at).
       # Non-retriable failures park at once. Alert on outbox_oldest_pending_age_seconds.
       retryable-park-after: ${OUTBOX_RELAY_RETRYABLE_PARK_AFTER:PT24H}
+      # After a stopped batch the relay waits interval, then doubles the wait per
+      # stopped run up to this cap; any run that does not stop resets it.
+      max-backoff: ${OUTBOX_RELAY_MAX_BACKOFF:PT5M}
 
 logging:
   pattern:
