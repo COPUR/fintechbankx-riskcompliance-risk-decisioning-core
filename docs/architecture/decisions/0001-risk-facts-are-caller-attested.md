@@ -40,7 +40,7 @@ stated. A decision log that hides this would overstate what risk checked.
    country and velocity rules still apply. Reversible: adding a currency's
    thresholds is a policy change with a new `rule_set_version`.
 5. `evt.rsk.risk.assessed.v1` carries `attestationSource` (optional, contract
-   1.1.0). Who attested (`attestedBy`) stays behind the risk API.
+   1.0.0). Who attested (`attestedBy`) stays behind the risk API.
 
 ## Consequences
 

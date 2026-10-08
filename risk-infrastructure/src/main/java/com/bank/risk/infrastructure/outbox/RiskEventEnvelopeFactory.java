@@ -65,7 +65,7 @@ public class RiskEventEnvelopeFactory {
                 data.put("amount", amount);
                 data.put("reasons", e.reasons());
                 data.put("assessedAt", e.assessedAt().toString());
-                // Optional since contract 1.1.0; the attesting caller's id stays in the API.
+                // Optional in the contract; the attesting caller's id stays in the API.
                 data.put("attestationSource", e.attestationSource().name());
                 yield new PublicEvent(ASSESSED_TOPIC, ASSESSED_EVENT_TYPE, e.assessmentId().getValue(), data);
             }
