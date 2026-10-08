@@ -1,11 +1,13 @@
 package com.bank.risk.infrastructure.contract;
 
 import org.junit.jupiter.api.Test;
+import org.yaml.snakeyaml.Yaml;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -20,11 +22,38 @@ class RiskContextOpenApiContractTest {
         assertThat(spec).contains("\n  /api/v1/risk/assessments/{transactionId}:\n");
     }
 
+    /**
+     * Platform contract addendum 2026-10-08: DPoP binds open-finance TPP tokens only.
+     * This service takes internal client-credentials and staff tokens, so the
+     * contract must not promise a DPoP check the service does not make.
+     */
     @Test
-    void shouldRequireDpopForProtectedOperations() throws IOException {
-        String spec = loadSpec();
-        assertThat(spec).contains("name: DPoP");
-        assertThat(spec).contains("required: true");
+    @SuppressWarnings("unchecked")
+    void theDpopHeaderIsOptionalAndSaysWhyThisServiceDoesNotVerifyIt() throws IOException {
+        Map<String, Object> dpop = (Map<String, Object>) path(spec(), "components", "parameters", "DPoP");
+
+        assertThat(dpop).containsEntry("name", "DPoP").containsEntry("in", "header").containsEntry("required", false);
+        assertThat((String) dpop.get("description")).contains("TPP").contains("not verify");
+        for (String operation : List.of("/api/v1/risk/assess", "/api/v1/risk/assessments/{transactionId}")) {
+            Map<String, Object> pathItem = (Map<String, Object>) path(spec(), "paths", operation);
+            Map<String, Object> op = (Map<String, Object>) pathItem.values().iterator().next();
+            assertThat((List<Map<String, Object>>) op.get("security"))
+                .as("%s must not require a DPoP-bound token", operation)
+                .noneMatch(requirement -> requirement.containsKey("dpopAuth") && requirement.size() > 1);
+        }
+    }
+
+    private static Map<String, Object> spec() throws IOException {
+        return new Yaml().load(loadSpec());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Object path(Map<String, Object> node, String... keys) {
+        Object current = node;
+        for (String key : keys) {
+            current = ((Map<String, Object>) current).get(key);
+        }
+        return current;
     }
 
     private static String loadSpec() throws IOException {
