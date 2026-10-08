@@ -210,7 +210,8 @@ class RiskOutboxIT {
             .andReturn().getResponse().getContentAsString()).get("assessmentId").asText();
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
-            Clock.systemUTC(), 10, Duration.ofSeconds(1), Duration.ofDays(7), Duration.ofHours(24));
+            Clock.systemUTC(), 10, Duration.ofSeconds(1), Duration.ofDays(7), Duration.ofHours(24),
+            Duration.ofSeconds(1), Duration.ofMinutes(5), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
 
         assertThat(relay.relayOnce()).isEqualTo(1);
         assertThat(relay.relayOnce()).isZero();
@@ -242,7 +243,8 @@ class RiskOutboxIT {
 
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), Clock.systemUTC(), 10,
-            Duration.ofSeconds(1), Duration.ofDays(7), Duration.ofHours(24)).relayOnce();
+            Duration.ofSeconds(1), Duration.ofDays(7), Duration.ofHours(24),
+            Duration.ofSeconds(1), Duration.ofMinutes(5), new io.micrometer.core.instrument.simple.SimpleMeterRegistry()).relayOnce();
 
         ArgumentCaptor<ProducerRecord<String, String>> records = ArgumentCaptor.forClass(ProducerRecord.class);
         Mockito.verify(kafka).send(records.capture());
@@ -261,7 +263,8 @@ class RiskOutboxIT {
                 new RecordTooLargeException("too large"))))
             .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
-            Clock.systemUTC(), 10, Duration.ofSeconds(1), Duration.ofDays(7), Duration.ofHours(24));
+            Clock.systemUTC(), 10, Duration.ofSeconds(1), Duration.ofDays(7), Duration.ofHours(24),
+            Duration.ofSeconds(1), Duration.ofMinutes(5), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
 
         assertThat(relay.relayOnce()).isEqualTo(1);
         assertThat(relay.relayOnce()).as("the parked row is not picked up again").isZero();
@@ -323,7 +326,8 @@ class RiskOutboxIT {
             List<Future<Integer>> runs = new java.util.ArrayList<>();
             for (int replica = 0; replica < 2; replica++) {
                 OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
-                    Clock.systemUTC(), 10, Duration.ofSeconds(5), Duration.ofDays(7), Duration.ofHours(24));
+                    Clock.systemUTC(), 10, Duration.ofSeconds(5), Duration.ofDays(7), Duration.ofHours(24),
+            Duration.ofSeconds(1), Duration.ofMinutes(5), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
                 runs.add(replicas.submit(() -> {
                     start.await(10, TimeUnit.SECONDS);
                     return relay.relayOnce();
