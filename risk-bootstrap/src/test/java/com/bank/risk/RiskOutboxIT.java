@@ -152,7 +152,7 @@ class RiskOutboxIT {
             try (Statement insert = winner.createStatement()) {
                 insert.executeUpdate("insert into " + ASSESSMENTS + " (assessment_id, transaction_id, amount, currency, "
                     + "high_risk_country, velocity_score, score, decision, reasons, assessed_at, attestation_source, attested_by) "
-                    + "values ('RISK-RACE-WINNER', 'PAY-RACE-1', 100.00, 'AED', true, 80, 70, 'REVIEW', "
+                    + "values ('RISK-RACE-WINNER', 'PAY-RACE-1', 100.00, 'USD', true, 80, 70, 'REVIEW', "
                     + "'[\"HIGH_RISK_COUNTRY\",\"HIGH_VELOCITY\"]'::jsonb, now(), 'CALLER_ATTESTED', 'svc-pay-initiation-settlement')");
             }
             // The loser cannot see the uncommitted winner, evaluates, and blocks on the unique index.
@@ -306,7 +306,7 @@ class RiskOutboxIT {
             .with(jwt().jwt(j -> j.subject("service-account-payments").claim("azp", "svc-pay-initiation-settlement")).authorities(new SimpleGrantedAuthority("ROLE_SERVICE")))
             .contentType(MediaType.APPLICATION_JSON)
             .content("""
-                {"transactionId": "%s", "amount": %s, "currency": "AED", "highRiskCountry": true, "velocityScore": 80}
+                {"transactionId": "%s", "amount": %s, "currency": "USD", "highRiskCountry": true, "velocityScore": 80}
                 """.formatted(transactionId, amount)));
     }
 }

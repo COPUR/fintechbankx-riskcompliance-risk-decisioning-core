@@ -176,7 +176,7 @@ class RiskServiceIT {
 
     private static String body(String transactionId, String amount, boolean highRiskCountry, int velocity) {
         return """
-            {"transactionId": "%s", "amount": %s, "currency": "AED", "highRiskCountry": %s, "velocityScore": %d}
+            {"transactionId": "%s", "amount": %s, "currency": "USD", "highRiskCountry": %s, "velocityScore": %d}
             """.formatted(transactionId, amount, highRiskCountry, velocity);
     }
 
