@@ -210,7 +210,7 @@ class RiskOutboxIT {
             .andReturn().getResponse().getContentAsString()).get("assessmentId").asText();
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
-            Clock.systemUTC(), 10, Duration.ofSeconds(1), Duration.ofDays(7), Duration.ofHours(24),
+            Clock.systemUTC(), 10, Duration.ofSeconds(1), Duration.ofDays(7),
             Duration.ofSeconds(1), Duration.ofMinutes(5), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
 
         assertThat(relay.relayOnce()).isEqualTo(1);
@@ -243,7 +243,7 @@ class RiskOutboxIT {
 
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), Clock.systemUTC(), 10,
-            Duration.ofSeconds(1), Duration.ofDays(7), Duration.ofHours(24),
+            Duration.ofSeconds(1), Duration.ofDays(7),
             Duration.ofSeconds(1), Duration.ofMinutes(5), new io.micrometer.core.instrument.simple.SimpleMeterRegistry()).relayOnce();
 
         ArgumentCaptor<ProducerRecord<String, String>> records = ArgumentCaptor.forClass(ProducerRecord.class);
@@ -263,7 +263,7 @@ class RiskOutboxIT {
                 new RecordTooLargeException("too large"))))
             .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
-            Clock.systemUTC(), 10, Duration.ofSeconds(1), Duration.ofDays(7), Duration.ofHours(24),
+            Clock.systemUTC(), 10, Duration.ofSeconds(1), Duration.ofDays(7),
             Duration.ofSeconds(1), Duration.ofMinutes(5), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
 
         assertThat(relay.relayOnce()).isEqualTo(1);
@@ -273,7 +273,6 @@ class RiskOutboxIT {
         Map<String, Object> parked = jdbc.queryForMap("select o.parked_at, o.first_failed_at, o.last_error, o.attempts from " + OUTBOX
             + " o where o.payload -> 'data' ->> 'transactionId' = 'PAY-PARK-1'");
         assertThat(parked.get("parked_at")).isNotNull();
-        assertThat(parked.get("first_failed_at")).isNotNull();
         assertThat((String) parked.get("last_error")).startsWith("RecordTooLargeException");
         assertThat(parked.get("attempts")).isEqualTo(1);
         assertThat(jdbc.queryForObject("select count(*) from " + OUTBOX
@@ -326,7 +325,7 @@ class RiskOutboxIT {
             List<Future<Integer>> runs = new java.util.ArrayList<>();
             for (int replica = 0; replica < 2; replica++) {
                 OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
-                    Clock.systemUTC(), 10, Duration.ofSeconds(5), Duration.ofDays(7), Duration.ofHours(24),
+                    Clock.systemUTC(), 10, Duration.ofSeconds(5), Duration.ofDays(7),
             Duration.ofSeconds(1), Duration.ofMinutes(5), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
                 runs.add(replicas.submit(() -> {
                     start.await(10, TimeUnit.SECONDS);

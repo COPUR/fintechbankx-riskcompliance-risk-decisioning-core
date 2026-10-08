@@ -44,13 +44,12 @@ class OutboxRelayTest {
     private final SpringDataOutboxRepository outbox = mock(SpringDataOutboxRepository.class);
     private final KafkaTemplate<String, String> kafka = mock(KafkaTemplate.class);
     private final TransactionTemplate transactions = inlineTransactions();
-    private static final Duration PARK_AFTER = Duration.ofHours(24);
     private static final Duration BACKOFF_BASE = Duration.ofSeconds(1);
     private static final Duration BACKOFF_CAP = Duration.ofMinutes(5);
     private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
     private final MutableClock clock = new MutableClock(NOW);
     private final OutboxRelay relay = new OutboxRelay(outbox, kafka, transactions, clock, 50,
-        Duration.ofSeconds(1), Duration.ofDays(7), PARK_AFTER, BACKOFF_BASE, BACKOFF_CAP, registry);
+        Duration.ofSeconds(1), Duration.ofDays(7), BACKOFF_BASE, BACKOFF_CAP, registry);
 
     @Test
     void theRelayLockKeyIsRiskSpecific() {
@@ -88,7 +87,8 @@ class OutboxRelayTest {
         } finally {
             Thread.interrupted();
         }
-        assertThat(first.getLastError()).isEqualTo("interrupted");
+        assertThat(first.getLastError()).as("an interrupted send does not mark the row").isNull();
+        assertThat(first.getAttempts()).isZero();
         verify(kafka, times(1)).send(any(ProducerRecord.class));
     }
 
@@ -113,7 +113,7 @@ class OutboxRelayTest {
             }
         };
         OutboxRelay idle = new OutboxRelay(outbox, kafka, nothing, Clock.fixed(NOW, ZoneOffset.UTC), 50,
-            Duration.ofSeconds(1), Duration.ofDays(7), PARK_AFTER, BACKOFF_BASE, BACKOFF_CAP, registry);
+            Duration.ofSeconds(1), Duration.ofDays(7), BACKOFF_BASE, BACKOFF_CAP, registry);
 
         assertThat(idle.relayOnce()).isZero();
         assertThat(idle.purgePublished()).isZero();
@@ -145,8 +145,8 @@ class OutboxRelayTest {
         assertThat(first.getPublishedAt()).isEqualTo(NOW);
         assertThat(second.getPublishedAt()).isNull();
         assertThat(second.getParkedAt()).as("a retryable failure is retried, not parked").isNull();
-        assertThat(second.getAttempts()).isEqualTo(1);
-        assertThat(second.getLastError()).startsWith("NetworkException");
+        assertThat(second.getAttempts()).as("ADR-021 decision 4: the row is not marked").isZero();
+        assertThat(second.getLastError()).isNull();
         assertThat(third.getAttempts()).isZero();
         verify(kafka, times(2)).send(any(ProducerRecord.class));
     }
@@ -162,7 +162,9 @@ class OutboxRelayTest {
         assertThat(relay.relayOnce()).isZero();
 
         assertThat(first.getParkedAt()).isNull();
-        assertThat(first.getLastError()).startsWith("TimeoutException");
+        assertThat(first.getLastError()).isNull();
+        assertThat(registry.get("outbox.publish.failures").tag("exception", "TimeoutException").counter().count())
+            .isEqualTo(1.0);
         verify(kafka, times(1)).send(any(ProducerRecord.class));
     }
 
@@ -202,28 +204,13 @@ class OutboxRelayTest {
         assertThat(relay.relayOnce()).isZero();
 
         assertThat(first.getParkedAt()).isNull();
-        assertThat(first.getAttempts()).isEqualTo(1);
-        assertThat(first.getFirstFailedAt()).isEqualTo(NOW);
+        assertThat(first.getAttempts()).as("the row is not marked").isZero();
+        assertThat(first.getLastError()).isNull();
+        assertThat(first.getFirstFailedAt()).isNull();
         assertThat(next.getParkedAt()).isNull();
         assertThat(next.getPublishedAt()).as("the batch stopped at the failing row").isNull();
         assertThat(next.getAttempts()).isZero();
         verify(kafka, times(1)).send(any(ProducerRecord.class));
-    }
-
-    @Test
-    void anAuthFailureParksOnlyPastTheRetryableCeiling() {
-        OutboxEventJpaEntity row = row("RISK-1");
-        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
-        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(row));
-        when(kafka.send(any(ProducerRecord.class))).thenAnswer(call -> CompletableFuture.failedFuture(
-            producerFailure(new org.apache.kafka.common.errors.SaslAuthenticationException("bad IAM signature"))));
-
-        relayAt(NOW).relayOnce();
-        relayAt(NOW.plus(PARK_AFTER)).relayOnce();
-        assertThat(row.getParkedAt()).isNull();
-
-        relayAt(NOW.plus(PARK_AFTER).plusSeconds(1)).relayOnce();
-        assertThat(row.getParkedAt()).isEqualTo(NOW.plus(PARK_AFTER).plusSeconds(1));
     }
 
     @ParameterizedTest
@@ -261,37 +248,14 @@ class OutboxRelayTest {
             clock.advance(BACKOFF_CAP.plusSeconds(1));
         }
 
-        assertThat(row.getAttempts()).isEqualTo(20);
-        assertThat(row.getParkedAt()).as("retryable failures never count toward parking").isNull();
-        assertThat(row.getFirstFailedAt()).isEqualTo(NOW);
+        assertThat(row.getParkedAt()).as("retryable failures never park").isNull();
+        assertThat(row.getAttempts()).isZero();
+        assertThat(row.getFirstFailedAt()).isNull();
+        verify(kafka, times(20)).send(any(ProducerRecord.class));
     }
 
     @Test
-    void aRetryableFailureParksOnlyOnceTheRowHasFailedForLongerThanTheCeiling() {
-        OutboxEventJpaEntity stuck = row("RISK-1");
-        OutboxEventJpaEntity next = row("RISK-2");
-        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
-        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(stuck, next));
-        when(kafka.send(any(ProducerRecord.class)))
-            .thenReturn(CompletableFuture.failedFuture(producerFailure(new NetworkException("broker down"))))
-            .thenReturn(CompletableFuture.failedFuture(producerFailure(new NetworkException("broker down"))))
-            .thenReturn(CompletableFuture.failedFuture(producerFailure(new NetworkException("broker down"))))
-            .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
-
-        relayAt(NOW).relayOnce();
-        assertThat(relayAt(NOW.plus(PARK_AFTER)).relayOnce()).as("exactly at the ceiling: still retried").isZero();
-        assertThat(stuck.getParkedAt()).isNull();
-
-        Instant pastCeiling = NOW.plus(PARK_AFTER).plusSeconds(1);
-        assertThat(relayAt(pastCeiling).relayOnce()).isEqualTo(1);
-
-        assertThat(stuck.getFirstFailedAt()).as("measured from the first failure").isEqualTo(NOW);
-        assertThat(stuck.getParkedAt()).isEqualTo(pastCeiling);
-        assertThat(next.getPublishedAt()).as("the batch continues past the parked row").isEqualTo(pastCeiling);
-    }
-
-    @Test
-    void aPermanentFailureParksAtOnceAndRecordsWhenTheRowFirstFailed() {
+    void aPermanentFailureParksAtOnceAndRecordsTheReason() {
         OutboxEventJpaEntity poison = row("RISK-1");
         when(outbox.tryRelayLock(anyLong())).thenReturn(true);
         when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(poison));
@@ -301,18 +265,38 @@ class OutboxRelayTest {
         relay.relayOnce();
 
         assertThat(poison.getAttempts()).isEqualTo(1);
-        assertThat(poison.getFirstFailedAt()).isEqualTo(NOW);
+        assertThat(poison.getLastError()).startsWith("RecordTooLargeException");
         assertThat(poison.getParkedAt()).isEqualTo(NOW);
     }
 
-    @Test
-    void theRetryableCeilingMustBePositive() {
-        for (Duration invalid : List.of(Duration.ZERO, Duration.ofSeconds(-1))) {
-            org.assertj.core.api.Assertions.assertThatThrownBy(() -> new OutboxRelay(outbox, kafka, transactions,
-                    Clock.fixed(NOW, ZoneOffset.UTC), 50, Duration.ofSeconds(1), Duration.ofDays(7), invalid,
-                    BACKOFF_BASE, BACKOFF_CAP, registry))
-                .isInstanceOf(IllegalArgumentException.class);
+    /** ADR-021 decision 4: a non-payload failure never parks or skips a row, however long it lasts. */
+    @ParameterizedTest
+    @MethodSource("nonPayloadFailuresLastingADay")
+    void aNonPayloadFailureLastingMoreThan24HoursNeverParksAndTheNextRowIsNotSent(RuntimeException failure) {
+        OutboxEventJpaEntity stuck = row("RISK-1");
+        OutboxEventJpaEntity next = row("RISK-2");
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(stuck, next));
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenAnswer(call -> CompletableFuture.failedFuture(producerFailure(failure)));
+
+        for (Duration elapsed = Duration.ZERO; elapsed.compareTo(Duration.ofHours(25)) <= 0;
+                elapsed = elapsed.plus(BACKOFF_CAP)) {
+            assertThat(relay.relayOnce()).isZero();
+            clock.advance(BACKOFF_CAP);
         }
+
+        assertThat(stuck.getParkedAt()).isNull();
+        assertThat(stuck.getAttempts()).isZero();
+        assertThat(next.getParkedAt()).isNull();
+        assertThat(next.getPublishedAt()).isNull();
+        verify(kafka, times(301).description("only the head row is ever tried")).send(any(ProducerRecord.class));
+    }
+
+    static Stream<RuntimeException> nonPayloadFailuresLastingADay() {
+        return Stream.of(new NetworkException("broker down"),
+            new org.apache.kafka.common.errors.SaslAuthenticationException("bad IAM signature"),
+            new TopicAuthorizationException(Set.of("evt.rsk.risk.assessed.v1")));
     }
 
     @Test
@@ -320,7 +304,7 @@ class OutboxRelayTest {
         for (Duration[] invalid : List.of(new Duration[] {Duration.ZERO, BACKOFF_CAP},
                 new Duration[] {Duration.ofMinutes(10), Duration.ofMinutes(5)})) {
             org.assertj.core.api.Assertions.assertThatThrownBy(() -> new OutboxRelay(outbox, kafka, transactions,
-                    clock, 50, Duration.ofSeconds(1), Duration.ofDays(7), PARK_AFTER, invalid[0], invalid[1], registry))
+                    clock, 50, Duration.ofSeconds(1), Duration.ofDays(7), invalid[0], invalid[1], registry))
                 .isInstanceOf(IllegalArgumentException.class);
         }
     }
@@ -435,7 +419,7 @@ class OutboxRelayTest {
 
     private OutboxRelay relayAt(Instant now) {
         return new OutboxRelay(outbox, kafka, transactions, Clock.fixed(now, ZoneOffset.UTC), 50,
-            Duration.ofSeconds(1), Duration.ofDays(7), PARK_AFTER, BACKOFF_BASE, BACKOFF_CAP, registry);
+            Duration.ofSeconds(1), Duration.ofDays(7), BACKOFF_BASE, BACKOFF_CAP, registry);
     }
 
     /** What KafkaTemplate completes its future with when the producer reports a failure. */

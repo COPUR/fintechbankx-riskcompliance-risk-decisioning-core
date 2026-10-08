@@ -67,7 +67,7 @@ class OutboxConfigurationTest {
         OutboxConfiguration.RelayConfiguration relayConfiguration = new OutboxConfiguration.RelayConfiguration();
 
         OutboxRelay relay = relayConfiguration.outboxRelay(outbox, mock(KafkaTemplate.class),
-            mock(PlatformTransactionManager.class), Clock.systemUTC(), 100, Duration.ofSeconds(10), Duration.ofDays(7), Duration.ofHours(24),
+            mock(PlatformTransactionManager.class), Clock.systemUTC(), 100, Duration.ofSeconds(10), Duration.ofDays(7),
             Duration.ofSeconds(1), Duration.ofMinutes(5), new SimpleMeterRegistry());
 
         assertThat(relay).isNotNull();
