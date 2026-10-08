@@ -21,7 +21,7 @@ Extraction of risk decisioning from `enterprise-loan-management-system` into
 | `customers`, `loans`, `loan_applications` | `svc-cus-profile-kyc`, `svc-ln-loan-lifecycle` | never copied here |
 | Fraud ML and vendor clients (`infrastructure/fraud` in the payments repo) | belongs here, not ported yet | payments screens with its rule-based adapter until this service exposes a model-backed score |
 
-Flyway migrations: `risk-infrastructure/src/main/resources/db/migration/V1__create_risk_assessment.sql`, `V2__create_legacy_credit_risk_assessment.sql`, `V3__create_outbox.sql`. The service never reads monolith tables and the monolith must not read `sc_rsk_decisioning`.
+Flyway migrations: `risk-infrastructure/src/main/resources/db/migration/V1__create_risk_assessment.sql`, `V2__create_legacy_credit_risk_assessment.sql`, `V3__create_outbox.sql`, `V4__park_undeliverable_outbox_events.sql`. The service never reads monolith tables and the monolith must not read `sc_rsk_decisioning`.
 
 ## 2. Backfill and reconciliation
 
@@ -47,7 +47,39 @@ The backfill is independent of the other contexts' backfills and can be re-run u
 | 4 | Create `evt.rsk.risk.assessed.v1` on the platform cluster, grant the IRSA role (`msk_cluster_arn`), enable the outbox relay | relay off; events stay in the outbox |
 | 5 | After one full month-end cycle: drop the monolith table | restore from snapshot |
 
-## 4. Acceptance checklist
+## 4. Parked outbox events
+
+`OutboxRelay` parks a row (sets `parked_at`, keeps the reason in `last_error`) when Kafka refuses it permanently
+(`RecordTooLargeException`, `SerializationException`, `InvalidTopicException`, `TopicAuthorizationException`, any
+error that is not a Kafka `RetriableException`) or when it has failed `risk.outbox.relay.max-attempts` times
+(`OUTBOX_RELAY_MAX_ATTEMPTS`, default 10). Retryable failures below the cap stop the batch and are retried on the
+next run, as before. Parked rows are skipped, never purged, and counted by `outbox_parked_events{service="svc-rsk-decisioning"}`;
+alert on any value above zero, because consumers are missing those decisions.
+
+A long broker or network outage also parks rows: each head-of-queue row parks after the cap, then the next one
+becomes the head. After such an outage, replay everything that was parked during it.
+
+Replay, after fixing the cause (topic created, IAM policy fixed, payload size limit raised):
+
+```sql
+-- Inspect
+SELECT event_id, created_seq, topic, attempts, last_error, parked_at
+FROM sc_rsk_decisioning.outbox_event
+WHERE published_at IS NULL AND parked_at IS NOT NULL
+ORDER BY created_seq;
+
+-- Un-park one row (or drop the event_id filter to replay all, in created_seq order);
+-- attempts must be reset, otherwise the cap parks the row again on its first failure.
+UPDATE sc_rsk_decisioning.outbox_event
+SET parked_at = NULL, attempts = 0, last_error = NULL
+WHERE event_id = '<event id>' AND published_at IS NULL AND parked_at IS NOT NULL;
+```
+
+The relay publishes un-parked rows on its next run (`risk.outbox.relay.interval`, 1 s). Consumers de-duplicate on
+`eventId`, so replaying a row that Kafka did in fact accept is safe. Record each replay (event ids, cause, operator)
+in the change log of the environment.
+
+## 5. Acceptance checklist
 
 - [x] Service builds and tests standalone (`ci/build`, `ci/test`, including PostgreSQL integration tests)
 - [x] Own schema and migrations; Hibernate validates the entity at startup

@@ -20,7 +20,7 @@ public interface SpringDataOutboxRepository extends JpaRepository<OutboxEventJpa
 
     @Query(value = """
         select * from outbox_event
-        where published_at is null
+        where published_at is null and parked_at is null
         order by created_seq
         limit :batchSize
         """, nativeQuery = true)
@@ -31,4 +31,10 @@ public interface SpringDataOutboxRepository extends JpaRepository<OutboxEventJpa
     int deletePublishedBefore(@Param("before") Instant before);
 
     long countByPublishedAtIsNull();
+
+    /** Rows waiting for the relay (not published, not parked). */
+    long countByPublishedAtIsNullAndParkedAtIsNull();
+
+    /** Rows the relay gave up on; they wait for a manual replay. */
+    long countByPublishedAtIsNullAndParkedAtIsNotNull();
 }

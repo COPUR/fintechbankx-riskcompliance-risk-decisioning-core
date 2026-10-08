@@ -85,7 +85,7 @@ Module layout: `risk-domain` (assessment, events, policy, ports) ← `risk-appli
 - `OutboxRelay` publishes rows in insertion order. One replica relays at a time (Postgres advisory lock). Delivery is at least once, so consumers de-duplicate on `eventId`. Published rows are purged after `risk.outbox.retention` (7 days).
 - Runtime settings: `KAFKA_BOOTSTRAP_SERVERS` and `KAFKA_SECURITY_PROTOCOL`; `SPRING_PROFILES_ACTIVE=kafka-msk` selects Amazon MSK with IAM auth through the IRSA role, and `kafka-strimzi` selects mutual TLS with PEM from `KAFKA_TLS_CERT`/`KAFKA_TLS_KEY`/`KAFKA_TLS_CA`; `OUTBOX_RELAY_ENABLED` defaults to `true`. The producer follows the platform client guide: client id `svc-rsk-decisioning`, `acks=all`, idempotent, lz4, `linger.ms=5`, and no topic auto-creation.
 - Record headers: `eventType`, `eventId`, `correlationId`, `x-fapi-interaction-id`, and a W3C `traceparent` when the request that raised the event was traced.
-- Backlog metric: `outbox_pending_events{service="svc-rsk-decisioning"}`.
+- Backlog metric: `outbox_pending_events{service="svc-rsk-decisioning"}`. A row Kafka refuses permanently, or that fails `risk.outbox.relay.max-attempts` times (default 10), is parked so it cannot stall later events: `outbox_parked_events{service="svc-rsk-decisioning"}`, replay steps in the runbook.
 - Status: Proposed. The AsyncAPI catalog mirrors this contract, and the topics are not yet created on the platform cluster.
 
 ## Dokümantasyon ve Referanslar

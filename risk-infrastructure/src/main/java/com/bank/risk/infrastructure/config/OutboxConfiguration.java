@@ -23,6 +23,7 @@ import java.time.Duration;
 public class OutboxConfiguration {
 
     static final String PENDING_GAUGE = "outbox.pending.events";
+    static final String PARKED_GAUGE = "outbox.parked.events";
 
     @Bean
     RiskEventEnvelopeFactory riskEventEnvelopeFactory(ObjectMapper objectMapper) {
@@ -41,8 +42,21 @@ public class OutboxConfiguration {
      */
     @Bean
     Gauge riskOutboxPendingGauge(MeterRegistry registry, SpringDataOutboxRepository outbox) {
-        return Gauge.builder(PENDING_GAUGE, outbox, SpringDataOutboxRepository::countByPublishedAtIsNull)
-            .description("Risk events written to the outbox but not yet published to Kafka")
+        return Gauge.builder(PENDING_GAUGE, outbox, SpringDataOutboxRepository::countByPublishedAtIsNullAndParkedAtIsNull)
+            .description("Risk events written to the outbox and waiting for the relay (parked rows excluded)")
+            .tag("service", RiskEventEnvelopeFactory.PRODUCER)
+            .register(registry);
+    }
+
+    /**
+     * Events the relay gave up on (Prometheus outbox_parked_events). Alert on
+     * any value above zero: a consumer is missing a decision until the row is
+     * replayed (runbook "Parked outbox events").
+     */
+    @Bean
+    Gauge riskOutboxParkedGauge(MeterRegistry registry, SpringDataOutboxRepository outbox) {
+        return Gauge.builder(PARKED_GAUGE, outbox, SpringDataOutboxRepository::countByPublishedAtIsNullAndParkedAtIsNotNull)
+            .description("Risk events the outbox relay parked after a permanent failure or too many attempts")
             .tag("service", RiskEventEnvelopeFactory.PRODUCER)
             .register(registry);
     }
@@ -64,8 +78,10 @@ public class OutboxConfiguration {
                                 Clock clock,
                                 @Value("${risk.outbox.relay.batch-size:100}") int batchSize,
                                 @Value("${risk.outbox.relay.send-timeout:PT35S}") Duration sendTimeout,
-                                @Value("${risk.outbox.retention:P7D}") Duration retention) {
-            return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), clock, batchSize, sendTimeout, retention);
+                                @Value("${risk.outbox.retention:P7D}") Duration retention,
+                                @Value("${risk.outbox.relay.max-attempts:10}") int maxAttempts) {
+            return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), clock, batchSize,
+                sendTimeout, retention, maxAttempts);
         }
 
         @Bean
