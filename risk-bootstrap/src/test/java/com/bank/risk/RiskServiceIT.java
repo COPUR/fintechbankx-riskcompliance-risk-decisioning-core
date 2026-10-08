@@ -85,6 +85,23 @@ class RiskServiceIT {
         assertThat(tables).containsExactly("legacy_credit_risk_assessment", "outbox_event", "risk_assessment");
     }
 
+    /** rsk-policy-v3: the payment type is a fact of the decision of record; a retry must repeat it. */
+    @Test
+    void thePaymentTypeIsStoredWithTheDecisionAndARetryWithAnotherTypeIsRefused() throws Exception {
+        String mobile = """
+            {"transactionId": "PAY-TYPE-1", "amount": 100.00, "currency": "USD", "highRiskCountry": false, "velocityScore": 0, "paymentType": "MOBILE_PAYMENT"}
+            """;
+        mvc.perform(asService(post("/api/v1/risk/assess")).contentType(MediaType.APPLICATION_JSON).content(mobile))
+            .andExpect(status().isCreated());
+
+        assertThat(jdbc.queryForObject("select payment_type from sc_rsk_decisioning.risk_assessment"
+            + " where transaction_id = 'PAY-TYPE-1'", String.class)).isEqualTo("MOBILE_PAYMENT");
+        mvc.perform(asService(post("/api/v1/risk/assess")).contentType(MediaType.APPLICATION_JSON)
+                .content(mobile.replace("MOBILE_PAYMENT", "TRANSFER")))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("TRANSACTION_ALREADY_ASSESSED"));
+    }
+
     @Test
     void assessmentIsStoredOnceAndReturnedOnRetry() throws Exception {
         String first = assess("PAY-RISK-1", "60000.00", true, 80)
@@ -200,7 +217,7 @@ class RiskServiceIT {
 
     private static String body(String transactionId, String amount, boolean highRiskCountry, int velocity) {
         return """
-            {"transactionId": "%s", "amount": %s, "currency": "USD", "highRiskCountry": %s, "velocityScore": %d}
+            {"transactionId": "%s", "amount": %s, "currency": "USD", "highRiskCountry": %s, "velocityScore": %d, "paymentType": "TRANSFER"}
             """.formatted(transactionId, amount, highRiskCountry, velocity);
     }
 

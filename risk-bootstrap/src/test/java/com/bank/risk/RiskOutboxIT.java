@@ -483,7 +483,7 @@ class RiskOutboxIT {
             .with(jwt().jwt(j -> j.subject("service-account-payments").claim("azp", "svc-pay-initiation-settlement")).authorities(new SimpleGrantedAuthority("ROLE_SERVICE")))
             .contentType(MediaType.APPLICATION_JSON)
             .content("""
-                {"transactionId": "%s", "amount": %s, "currency": "USD", "highRiskCountry": true, "velocityScore": 80}
+                {"transactionId": "%s", "amount": %s, "currency": "USD", "highRiskCountry": true, "velocityScore": 80, "paymentType": "TRANSFER"}
                 """.formatted(transactionId, amount)));
     }
 }

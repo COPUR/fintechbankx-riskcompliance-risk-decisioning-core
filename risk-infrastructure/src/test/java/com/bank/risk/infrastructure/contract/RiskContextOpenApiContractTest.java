@@ -56,6 +56,19 @@ class RiskContextOpenApiContractTest {
         assertThat((Map<String, Object>) properties.get("velocityScore")).doesNotContainKey("default");
     }
 
+    /** rsk-policy-v3: the monolith's MOBILE_PAYMENT rule needs the payment type; it is required, with no default. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void paymentTypeIsRequiredWithTheMonolithsValuesAndNoDefault() throws IOException {
+        Map<String, Object> request = (Map<String, Object>) path(spec(), "components", "schemas", "RiskAssessmentRequest");
+        Map<String, Object> paymentType = (Map<String, Object>) ((Map<String, Object>) request.get("properties")).get("paymentType");
+
+        assertThat((List<String>) request.get("required")).contains("paymentType");
+        assertThat(paymentType).doesNotContainKey("default").containsEntry("type", "string");
+        assertThat((List<String>) paymentType.get("enum")).containsExactly("TRANSFER", "WIRE_TRANSFER", "ACH", "CHECK",
+                "CREDIT_CARD", "DEBIT_CARD", "MOBILE_PAYMENT", "LOAN_PAYMENT", "BILL_PAYMENT");
+    }
+
     private static Map<String, Object> spec() throws IOException {
         return new Yaml().load(loadSpec());
     }

@@ -70,7 +70,7 @@ class RiskControllerTest {
                         .principal(token(subject, azp, role))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                            {"transactionId":"TX-7","amount":10,"currency":"USD","highRiskCountry":false,"velocityScore":0}
+                            {"transactionId":"TX-7","amount":10,"currency":"USD","highRiskCountry":false,"velocityScore":0,"paymentType":"TRANSFER"}
                         """))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.attestationSource").value("CALLER_ATTESTED"))
@@ -89,7 +89,7 @@ class RiskControllerTest {
         mockMvc.perform(post("/api/v1/risk/assess")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                            {"transactionId":"TX-1","amount":200,"currency":"AED","highRiskCountry":false,"velocityScore":45}
+                            {"transactionId":"TX-1","amount":200,"currency":"AED","highRiskCountry":false,"velocityScore":45,"paymentType":"TRANSFER"}
                         """))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.transactionId").value("TX-1"))
@@ -119,7 +119,7 @@ class RiskControllerTest {
         mockMvc.perform(post("/api/v1/risk/assess")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                            {"transactionId":"TX-3","amount":201,"currency":"AED","highRiskCountry":false,"velocityScore":0}
+                            {"transactionId":"TX-3","amount":201,"currency":"AED","highRiskCountry":false,"velocityScore":0,"paymentType":"TRANSFER"}
                         """))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("TRANSACTION_ALREADY_ASSESSED"));
@@ -130,7 +130,7 @@ class RiskControllerTest {
         mockMvc.perform(post("/api/v1/risk/assess")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                            {"transactionId":"TX-4","amount":-1,"currency":"AED","highRiskCountry":false,"velocityScore":0}
+                            {"transactionId":"TX-4","amount":-1,"currency":"AED","highRiskCountry":false,"velocityScore":0,"paymentType":"TRANSFER"}
                         """))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
@@ -146,10 +146,13 @@ class RiskControllerTest {
     /** Caller-supplied risk facts fail closed: a missing fact is a 400, never the low-risk false or 0. */
     @ParameterizedTest(name = "{0}")
     @CsvSource(delimiter = '|', value = {
-        "highRiskCountry omitted  | {\"transactionId\":\"TX-6\",\"amount\":9000.00,\"currency\":\"USD\",\"velocityScore\":0}                          | highRiskCountry",
-        "highRiskCountry null     | {\"transactionId\":\"TX-6\",\"amount\":9000.00,\"currency\":\"USD\",\"highRiskCountry\":null,\"velocityScore\":0}  | highRiskCountry",
-        "velocityScore omitted    | {\"transactionId\":\"TX-6\",\"amount\":9000.00,\"currency\":\"USD\",\"highRiskCountry\":false}                       | velocityScore",
-        "velocityScore null       | {\"transactionId\":\"TX-6\",\"amount\":9000.00,\"currency\":\"USD\",\"highRiskCountry\":false,\"velocityScore\":null} | velocityScore"
+        "highRiskCountry omitted  | {\"transactionId\":\"TX-6\",\"amount\":9000.00,\"currency\":\"USD\",\"velocityScore\":0,\"paymentType\":\"TRANSFER\"}                          | highRiskCountry",
+        "highRiskCountry null     | {\"transactionId\":\"TX-6\",\"amount\":9000.00,\"currency\":\"USD\",\"highRiskCountry\":null,\"velocityScore\":0,\"paymentType\":\"TRANSFER\"}  | highRiskCountry",
+        "velocityScore omitted    | {\"transactionId\":\"TX-6\",\"amount\":9000.00,\"currency\":\"USD\",\"highRiskCountry\":false,\"paymentType\":\"TRANSFER\"}                       | velocityScore",
+        "velocityScore null       | {\"transactionId\":\"TX-6\",\"amount\":9000.00,\"currency\":\"USD\",\"highRiskCountry\":false,\"velocityScore\":null,\"paymentType\":\"TRANSFER\"} | velocityScore",
+        "paymentType omitted      | {\"transactionId\":\"TX-6\",\"amount\":9000.00,\"currency\":\"USD\",\"highRiskCountry\":false,\"velocityScore\":0}                          | paymentType",
+        "paymentType null         | {\"transactionId\":\"TX-6\",\"amount\":9000.00,\"currency\":\"USD\",\"highRiskCountry\":false,\"velocityScore\":0,\"paymentType\":null}  | paymentType",
+        "paymentType unknown      | {\"transactionId\":\"TX-6\",\"amount\":9000.00,\"currency\":\"USD\",\"highRiskCountry\":false,\"velocityScore\":0,\"paymentType\":\"CASH\"} | paymentType"
     })
     void anOmittedOrNullRiskFactIsA400NotALowRiskDefault(String name, String body, String field) throws Exception {
         mockMvc.perform(post("/api/v1/risk/assess")
@@ -163,12 +166,12 @@ class RiskControllerTest {
 
     @ParameterizedTest(name = "{0}")
     @CsvSource(delimiter = '|', value = {
-        "lower-case currency      | {\"transactionId\":\"TX-5\",\"amount\":10.00,\"currency\":\"aed\",\"highRiskCountry\":false,\"velocityScore\":0}   | currency",
-        "unknown currency         | {\"transactionId\":\"TX-5\",\"amount\":10.00,\"currency\":\"ABC\",\"highRiskCountry\":false,\"velocityScore\":0}   | currency",
-        "129-character id         | {\"transactionId\":\"ID129\",\"amount\":10.00,\"currency\":\"AED\",\"highRiskCountry\":false,\"velocityScore\":0}  | transactionId",
-        "16 integer digits        | {\"transactionId\":\"TX-5\",\"amount\":1e16,\"currency\":\"AED\",\"highRiskCountry\":false,\"velocityScore\":0}    | amount",
-        "five decimals            | {\"transactionId\":\"TX-5\",\"amount\":1.23456,\"currency\":\"AED\",\"highRiskCountry\":false,\"velocityScore\":0} | amount",
-        "velocity out of range    | {\"transactionId\":\"TX-5\",\"amount\":10.00,\"currency\":\"AED\",\"highRiskCountry\":false,\"velocityScore\":-1}  | velocityScore"
+        "lower-case currency      | {\"transactionId\":\"TX-5\",\"amount\":10.00,\"currency\":\"aed\",\"highRiskCountry\":false,\"velocityScore\":0,\"paymentType\":\"TRANSFER\"}   | currency",
+        "unknown currency         | {\"transactionId\":\"TX-5\",\"amount\":10.00,\"currency\":\"ABC\",\"highRiskCountry\":false,\"velocityScore\":0,\"paymentType\":\"TRANSFER\"}   | currency",
+        "129-character id         | {\"transactionId\":\"ID129\",\"amount\":10.00,\"currency\":\"AED\",\"highRiskCountry\":false,\"velocityScore\":0,\"paymentType\":\"TRANSFER\"}  | transactionId",
+        "16 integer digits        | {\"transactionId\":\"TX-5\",\"amount\":1e16,\"currency\":\"AED\",\"highRiskCountry\":false,\"velocityScore\":0,\"paymentType\":\"TRANSFER\"}    | amount",
+        "five decimals            | {\"transactionId\":\"TX-5\",\"amount\":1.23456,\"currency\":\"AED\",\"highRiskCountry\":false,\"velocityScore\":0,\"paymentType\":\"TRANSFER\"} | amount",
+        "velocity out of range    | {\"transactionId\":\"TX-5\",\"amount\":10.00,\"currency\":\"AED\",\"highRiskCountry\":false,\"velocityScore\":-1,\"paymentType\":\"TRANSFER\"}  | velocityScore"
     })
     void inputsTheDecisionOfRecordCannotHoldAreA400(String name, String body, String field) throws Exception {
         mockMvc.perform(post("/api/v1/risk/assess")
