@@ -62,25 +62,6 @@ channels:
           retention.ms: 604800000
           max.message.bytes: 1048576
         bindingVersion: 0.5.0
-  deadLetter:
-    address: evt.rsk.risk.dlq.v1
-    title: evt.rsk.risk.dlq.v1
-    description: Dead-letter topic for the evt.rsk.risk namespace. Written by consumers (not by svc-rsk-decisioning)
-      after bounded retries; replayed by the owning consumer squad.
-    messages:
-      DeadLetter:
-        $ref: '#/components/messages/DeadLetter'
-    bindings:
-      kafka:
-        topic: evt.rsk.risk.dlq.v1
-        partitions: 3
-        replicas: 3
-        topicConfiguration:
-          cleanup.policy:
-          - delete
-          retention.ms: 1209600000
-          max.message.bytes: 1048576
-        bindingVersion: 0.5.0
 operations:
   publishRiskAssessed:
     action: send
@@ -96,8 +77,6 @@ components:
       $ref: ./common/event-envelope.yaml#/EventEnvelope
     EventHeaders:
       $ref: ./common/event-envelope.yaml#/EventHeaders
-    DeadLetterHeaders:
-      $ref: ./common/event-envelope.yaml#/DeadLetterHeaders
     MonetaryAmount:
       $ref: ./common/event-envelope.yaml#/MonetaryAmount
     RiskAssessedData:
@@ -176,21 +155,6 @@ components:
             description: aggregateId (assessmentId).
           bindingVersion: 0.5.0
       x-source-class: com.bank.risk.domain.RiskAssessedEvent
-    DeadLetter:
-      name: DeadLetter
-      title: Dead letter for evt.rsk.risk
-      summary: A message from this namespace that a consumer could not process after bounded retries.
-      contentType: application/json
-      headers:
-        $ref: '#/components/schemas/DeadLetterHeaders'
-      payload:
-        $ref: '#/components/schemas/EventEnvelope'
-      bindings:
-        kafka:
-          key:
-            type: string
-            description: Original record key (aggregateId).
-          bindingVersion: 0.5.0
   securitySchemes:
     mskIam:
       type: userPassword
