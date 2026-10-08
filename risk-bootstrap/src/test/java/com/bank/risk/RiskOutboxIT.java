@@ -282,7 +282,7 @@ class RiskOutboxIT {
         assertThat(outbox.countByPublishedAtIsNullAndParkedAtIsNull()).isZero();
 
         // Manual replay (runbook): un-park and reset the attempts; the next run publishes it.
-        jdbc.update("update " + OUTBOX + " set parked_at = null, first_failed_at = null, attempts = 0, last_error = null"
+        jdbc.update("update " + OUTBOX + " set parked_at = null, park_counted = false, first_failed_at = null, attempts = 0, last_error = null"
             + " where parked_at is not null");
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         assertThat(relay.relayOnce()).isEqualTo(1);

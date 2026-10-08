@@ -21,7 +21,7 @@ Extraction of risk decisioning from `enterprise-loan-management-system` into
 | `customers`, `loans`, `loan_applications` | `svc-cus-profile-kyc`, `svc-ln-loan-lifecycle` | never copied here |
 | Fraud ML and vendor clients (`infrastructure/fraud` in the payments repo) | belongs here, not ported yet | payments screens with its rule-based adapter until this service exposes a model-backed score |
 
-Flyway migrations: `risk-infrastructure/src/main/resources/db/migration/V1__create_risk_assessment.sql`, `V2__create_legacy_credit_risk_assessment.sql`, `V3__create_outbox.sql`, `V4__park_undeliverable_outbox_events.sql`, `V5__record_risk_assessment_attestation.sql`, `V6__outbox_first_failed_at.sql`, `V7__record_risk_assessment_rule_set_version.sql`. V5 backfills `attestation_source = 'CALLER_ATTESTED'` on existing rows (their `attested_by` stays NULL) and V7 backfills `rule_set_version = 'rsk-policy-v1'`; both then drop the column default, so every new row must state them (`rule_set_version` is NOT NULL). The service never reads monolith tables and the monolith must not read `sc_rsk_decisioning`.
+Flyway migrations: `risk-infrastructure/src/main/resources/db/migration/V1__create_risk_assessment.sql`, `V2__create_legacy_credit_risk_assessment.sql`, `V3__create_outbox.sql`, `V4__park_undeliverable_outbox_events.sql`, `V5__record_risk_assessment_attestation.sql`, `V6__outbox_first_failed_at.sql`, `V7__record_risk_assessment_rule_set_version.sql`, `V8__count_parked_outbox_events.sql`. V5 backfills `attestation_source = 'CALLER_ATTESTED'` on existing rows (their `attested_by` stays NULL) and V7 backfills `rule_set_version = 'rsk-policy-v1'`; both then drop the column default, so every new row must state them (`rule_set_version` is NOT NULL). V8 adds `outbox_event.park_counted` and backfills it to TRUE for rows already parked, so they are not counted again. The service never reads monolith tables and the monolith must not read `sc_rsk_decisioning`.
 
 ## 2. Backfill and reconciliation
 
@@ -45,7 +45,7 @@ The backfill is independent of the other contexts' backfills and can be re-run u
 | 2 | Payments call `POST /api/v1/risk/assess` with the payment id as `transactionId` and a client-credentials token (`SERVICE` role), behind a flag. Network path: the service-mesh repo's `allow-ingress-from-payments` in namespace `risk` (mesh #11); this chart ships no NetworkPolicy | flag off; payments keep their rule-based screening |
 | 3 | Monolith stops writing `risk_assessments`; re-run the backfill for late rows | monolith table is still intact |
 | 4 | Preconditions: the mesh contract (fintechbankx-platform-mesh-security-service-mesh `contracts/mesh-contract.yaml`) lists `msk` in the datastores of `risk-decisioning-service` and `allow-egress-msk` is generated for namespace `risk`; asyncapi-catalog #11 (the catalog entry for
-`api/asyncapi/svc-rsk-decisioning.yaml`) is merged; `evt.rsk.risk.assessed.v1` exists on the platform cluster; the IRSA role is granted (`msk_cluster_arn`). Then enable the relay: `helm upgrade ... --set config.OUTBOX_RELAY_ENABLED=true` (or the same key in the environment's values file). Check `outbox_pending_events` falls to zero and `outbox_parked_events` stays zero | `--set config.OUTBOX_RELAY_ENABLED=false`; events stay in the outbox |
+`api/asyncapi/svc-rsk-decisioning.yaml`) is merged; `evt.rsk.risk.assessed.v1` exists on the platform cluster; the IRSA role is granted (`msk_cluster_arn`). Then enable the relay: `helm upgrade ... --set config.OUTBOX_RELAY_ENABLED=true` (or the same key in the environment's values file). Check `outbox_pending_events` falls to zero and `outbox_parked_rows` stays zero | `--set config.OUTBOX_RELAY_ENABLED=false`; events stay in the outbox |
 | 5 | After one full month-end cycle: drop the monolith table | restore from snapshot |
 
 ## 4. Parked outbox events
@@ -53,7 +53,7 @@ The backfill is independent of the other contexts' backfills and can be re-run u
 `OutboxRelay` follows ADR-021 decision 4 (fintechbankx-governance-architecture-enablement-adr-runbooks):
 
 - Payload errors (`RecordTooLargeException`, `SerializationException`, `InvalidTopicException`): park the row
-  (`parked_at` set, reason in `last_error`, alert raised through `outbox_parked_events`) and continue with the
+  (`parked_at` set, reason in `last_error`, counted once in `outbox_parked_events_total`) and continue with the
   next row.
 - Everything else, including retriable, authorization and SASL/IAM failures and any unclassified exception: stop
   the batch without marking the row or anything after it, retry with backoff and alert. The relay never skips or
@@ -64,24 +64,27 @@ The backfill is independent of the other contexts' backfills and can be re-run u
 An outage or a credential problem therefore only delays events: fix the cause (the relay's WARN log names the
 exception) and the relay catches up by itself. `first_failed_at` (V6) is no longer written.
 
-Alerts (owning squad: `risk`, the Risk and Compliance Decisioning Squad). **Proposed** to the platform observability
-repository (fintechbankx-platform-observability-sre-operations); no rule on these series exists there yet, and this
-chart ships no PrometheusRule. The platform's outbox rules key on the `service_id` label, taken from the pod label
+Alerts (owning squad: `risk`, the Risk and Compliance Decisioning Squad). This chart ships no PrometheusRule. The age
+and send-failure rules are **Proposed** to the platform observability repository
+(fintechbankx-platform-observability-sre-operations) and stay proposed until platform's commit lands. The platform's outbox rules key on the `service_id` label, taken from the pod label
 `fintechbankx.io/service-id` (`svc-rsk-decisioning`, set by this chart and asserted in the deployability job):
 - Stalled relay, outage or broken credential:
   `max(outbox_oldest_pending_age_seconds{service_id="svc-rsk-decisioning"}) > 900` for 5m, severity critical,
   squad risk. The age is measured from `created_at` of the oldest row waiting for the relay.
 - Why it is stalled: `increase(outbox_send_failures_total{service_id="svc-rsk-decisioning"}[10m]) > 0`, severity
   warning, squad risk (tag `exception` names the cause).
-- Parked events: any increase alerts, `delta(outbox_parked_events{service_id="svc-rsk-decisioning"}[10m]) > 0`,
-  squad risk (`delta`, not `increase`, because the series is a gauge). Consumers are missing those decisions until
-  they are replayed.
+- Parked events: no rule in this service. The platform alert **OutboxEventsParked** fires on any increase of
+  `outbox_parked_events_total` over 15 minutes, with no `for` clause, severity warning, routed by squad with a
+  namespace fallback. The counter (tag `exception`: the exception class, or `OperatorPark` for a manual park) counts
+  each parked row once; `outbox_parked_rows` is the gauge of rows parked now. Consumers are missing those decisions
+  until the rows are replayed.
 - Dependency: these series reach the managed Prometheus only once the AMP remote-write keep regex is widened from
   `.*outbox_pending.*` to `outbox_.*` (platform owns that change). Scraping relies on the pod's `prometheus.io/*`
   annotations, which the PodMonitor reads; keep them.
 
 Manual park (operator only, change-logged). If one row is stuck on a non-payload error that only it triggers and
-the owning squad decides to let later events through, park it by hand with the reason; the relay then skips it:
+the owning squad decides to let later events through, park it by hand with the reason. The relay then skips it, and
+its next run counts it once in `outbox_parked_events_total{exception="OperatorPark"}`:
 
 ```sql
 UPDATE sc_rsk_decisioning.outbox_event
@@ -101,11 +104,12 @@ ORDER BY created_seq;
 
 -- Un-park one row (or drop the event_id filter to replay all, in created_seq order).
 UPDATE sc_rsk_decisioning.outbox_event
-SET parked_at = NULL, first_failed_at = NULL, attempts = 0, last_error = NULL
+SET parked_at = NULL, park_counted = FALSE, first_failed_at = NULL, attempts = 0, last_error = NULL
 WHERE event_id = '<event id>' AND published_at IS NULL AND parked_at IS NOT NULL;
 ```
 
-The relay publishes un-parked rows on its next run. Consumers de-duplicate on `eventId`, so replaying a row that
+Replay resets `park_counted`, so a row parked again later is counted again. The relay publishes un-parked rows on
+its next run. Consumers de-duplicate on `eventId`, so replaying a row that
 Kafka did in fact accept is safe. Record each manual park and replay (event ids, cause, operator) in the change log
 of the environment.
 
