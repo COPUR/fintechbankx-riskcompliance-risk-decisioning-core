@@ -208,6 +208,18 @@ components:
         assessedAt:
           type: string
           format: date-time
+        attestationSource:
+          type: string
+          description: |-
+            Who vouches for the risk facts the decision rests on. CALLER_ATTESTED:
+            highRiskCountry and velocityScore were stated by the caller and not
+            verified by this service. Clients must accept values they do not know.
+        attestedBy:
+          type: string
+          description: |-
+            The caller that stated the risk facts: the client id (azp) of a
+            service caller, or the subject of a staff caller. Absent for
+            decisions stored before it was recorded.
     ErrorResponse:
       type: object
       required: [code, message, interactionId, timestamp]

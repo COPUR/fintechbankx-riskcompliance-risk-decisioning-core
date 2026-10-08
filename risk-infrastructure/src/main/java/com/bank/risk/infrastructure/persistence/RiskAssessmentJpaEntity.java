@@ -51,12 +51,19 @@ public class RiskAssessmentJpaEntity {
     @Column(name = "assessed_at", nullable = false, updatable = false)
     private Instant assessedAt;
 
+    @Column(name = "attestation_source", nullable = false, length = 32, updatable = false)
+    private String attestationSource;
+
+    @Column(name = "attested_by", length = 255, updatable = false)
+    private String attestedBy;
+
     protected RiskAssessmentJpaEntity() {
     }
 
     RiskAssessmentJpaEntity(String assessmentId, String transactionId, BigDecimal amount, String currency,
                             boolean highRiskCountry, int velocityScore, int score,
-                            String decision, List<String> reasons, Instant assessedAt) {
+                            String decision, List<String> reasons, Instant assessedAt,
+                            String attestationSource, String attestedBy) {
         this.assessmentId = assessmentId;
         this.transactionId = transactionId;
         this.amount = amount;
@@ -67,6 +74,8 @@ public class RiskAssessmentJpaEntity {
         this.decision = decision;
         this.reasons = reasons;
         this.assessedAt = assessedAt;
+        this.attestationSource = attestationSource;
+        this.attestedBy = attestedBy;
     }
 
     public String getAssessmentId() { return assessmentId; }
@@ -79,4 +88,6 @@ public class RiskAssessmentJpaEntity {
     public String getDecision() { return decision; }
     public List<String> getReasons() { return reasons; }
     public Instant getAssessedAt() { return assessedAt; }
+    public String getAttestationSource() { return attestationSource; }
+    public String getAttestedBy() { return attestedBy; }
 }

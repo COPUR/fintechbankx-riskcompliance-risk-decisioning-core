@@ -13,15 +13,19 @@ import java.util.regex.Pattern;
  * transactionId up to 128 characters (unique across all callers, who
  * namespace their ids, for example PAY-...), amount positive with at most 15
  * integer digits and 4 decimals, currency an upper-case ISO 4217 code,
- * velocityScore 0 to 100.
+ * velocityScore 0 to 100. attestedBy names who stated highRiskCountry and
+ * velocityScore (the calling client's azp, or a staff member's subject), at
+ * most 255 characters; it is recorded with the decision, not compared on retry.
  */
 public record RiskEvaluationCommand(
         String transactionId,
         BigDecimal amount,
         String currency,
         boolean highRiskCountry,
-        int velocityScore
+        int velocityScore,
+        String attestedBy
 ) {
+    public static final int MAX_ATTESTED_BY_LENGTH = 255;
     public static final int MAX_TRANSACTION_ID_LENGTH = 128;
     public static final int MAX_INTEGER_DIGITS = 15;
     public static final int MAX_DECIMALS = 4;
@@ -50,6 +54,12 @@ public record RiskEvaluationCommand(
         }
         if (velocityScore < 0 || velocityScore > 100) {
             throw new IllegalArgumentException("velocityScore must be between 0 and 100");
+        }
+        if (attestedBy == null || attestedBy.isBlank()) {
+            throw new IllegalArgumentException("attestedBy (the caller stating the risk facts) is required");
+        }
+        if (attestedBy.length() > MAX_ATTESTED_BY_LENGTH) {
+            throw new IllegalArgumentException("attestedBy must be at most " + MAX_ATTESTED_BY_LENGTH + " characters");
         }
     }
 

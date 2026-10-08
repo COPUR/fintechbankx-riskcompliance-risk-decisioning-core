@@ -17,13 +17,14 @@ public record EvaluateRiskRequest(
         @NotNull(message = "highRiskCountry is required") Boolean highRiskCountry,
         @NotNull(message = "velocityScore is required") Integer velocityScore
 ) {
-    public RiskEvaluationCommand toCommand() {
+    /** @param attestedBy the authenticated caller stating the risk facts (see CallerAttestation) */
+    public RiskEvaluationCommand toCommand(String attestedBy) {
         if (highRiskCountry == null) {
             throw new IllegalArgumentException("highRiskCountry is required");
         }
         if (velocityScore == null) {
             throw new IllegalArgumentException("velocityScore is required");
         }
-        return new RiskEvaluationCommand(transactionId, amount, currency, highRiskCountry, velocityScore);
+        return new RiskEvaluationCommand(transactionId, amount, currency, highRiskCountry, velocityScore, attestedBy);
     }
 }

@@ -21,6 +21,8 @@ public final class RiskAssessment {
     private final RiskDecision decision;
     private final List<String> reasons;
     private final Instant assessedAt;
+    private final AttestationSource attestationSource;
+    private final String attestedBy;
     private final List<RiskDomainEvent> domainEvents = new ArrayList<>();
 
     private RiskAssessment(
@@ -33,7 +35,9 @@ public final class RiskAssessment {
             int score,
             RiskDecision decision,
             List<String> reasons,
-            Instant assessedAt
+            Instant assessedAt,
+            AttestationSource attestationSource,
+            String attestedBy
     ) {
         this.id = Objects.requireNonNull(id, "id is required");
         if (transactionId == null || transactionId.isBlank()) {
@@ -60,6 +64,8 @@ public final class RiskAssessment {
         this.decision = Objects.requireNonNull(decision, "decision is required");
         this.reasons = List.copyOf(Objects.requireNonNull(reasons, "reasons are required"));
         this.assessedAt = Objects.requireNonNull(assessedAt, "assessedAt is required");
+        this.attestationSource = Objects.requireNonNull(attestationSource, "attestationSource is required");
+        this.attestedBy = attestedBy;
     }
 
     /**
@@ -85,7 +91,10 @@ public final class RiskAssessment {
                 reasons,
                 // Microseconds: the precision the decision of record is stored with, so a
                 // retry returns exactly the timestamp the first response carried.
-                Instant.now().truncatedTo(ChronoUnit.MICROS)
+                Instant.now().truncatedTo(ChronoUnit.MICROS),
+                // The policy only applies thresholds to the caller's statements.
+                AttestationSource.CALLER_ATTESTED,
+                inputs.attestedBy()
         );
         assessment.domainEvents.add(assessment.assessedEvent());
         return assessment;
@@ -108,7 +117,9 @@ public final class RiskAssessment {
                 snapshot.score(),
                 snapshot.decision(),
                 snapshot.reasons(),
-                snapshot.assessedAt()
+                snapshot.assessedAt(),
+                snapshot.attestationSource(),
+                snapshot.attestedBy()
         );
     }
 
@@ -190,6 +201,15 @@ public final class RiskAssessment {
 
     public Instant getAssessedAt() {
         return assessedAt;
+    }
+
+    public AttestationSource getAttestationSource() {
+        return attestationSource;
+    }
+
+    /** The calling client (azp) or staff subject that stated the risk facts; null for decisions stored before V5. */
+    public String getAttestedBy() {
+        return attestedBy;
     }
 
     public boolean isBlocked() {

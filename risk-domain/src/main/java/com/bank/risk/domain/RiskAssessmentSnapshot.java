@@ -18,6 +18,9 @@ public record RiskAssessmentSnapshot(
         int score,
         RiskDecision decision,
         List<String> reasons,
-        Instant assessedAt
+        Instant assessedAt,
+        AttestationSource attestationSource,
+        /** Null only for decisions stored before the attester was recorded (V5). */
+        String attestedBy
 ) {
 }

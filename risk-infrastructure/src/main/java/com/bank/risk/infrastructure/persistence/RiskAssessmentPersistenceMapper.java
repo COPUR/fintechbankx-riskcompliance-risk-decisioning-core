@@ -1,5 +1,6 @@
 package com.bank.risk.infrastructure.persistence;
 
+import com.bank.risk.domain.AttestationSource;
 import com.bank.risk.domain.RiskAssessment;
 import com.bank.risk.domain.RiskAssessmentId;
 import com.bank.risk.domain.RiskAssessmentSnapshot;
@@ -23,7 +24,9 @@ final class RiskAssessmentPersistenceMapper {
                 assessment.getScore(),
                 assessment.getDecision().name(),
                 List.copyOf(assessment.getReasons()),
-                assessment.getAssessedAt());
+                assessment.getAssessedAt(),
+                assessment.getAttestationSource().name(),
+                assessment.getAttestedBy());
     }
 
     static RiskAssessment toDomain(RiskAssessmentJpaEntity row) {
@@ -37,6 +40,8 @@ final class RiskAssessmentPersistenceMapper {
                 row.getScore(),
                 RiskDecision.valueOf(row.getDecision()),
                 row.getReasons() == null ? List.of() : row.getReasons(),
-                row.getAssessedAt()));
+                row.getAssessedAt(),
+                AttestationSource.valueOf(row.getAttestationSource()),
+                row.getAttestedBy()));
     }
 }

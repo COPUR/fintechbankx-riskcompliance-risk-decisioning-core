@@ -7,6 +7,7 @@ import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -28,9 +29,10 @@ public class RiskController {
 
     @PostMapping("/assess")
     @PreAuthorize(CALLERS)
-    public ResponseEntity<RiskAssessmentResponse> assess(@Valid @RequestBody EvaluateRiskRequest request) {
+    public ResponseEntity<RiskAssessmentResponse> assess(@Valid @RequestBody EvaluateRiskRequest request,
+                                                         Authentication caller) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(RiskAssessmentResponse.from(service.assess(request.toCommand())));
+                .body(RiskAssessmentResponse.from(service.assess(request.toCommand(CallerAttestation.attestedBy(caller)))));
     }
 
     @GetMapping("/assessments/{transactionId}")
