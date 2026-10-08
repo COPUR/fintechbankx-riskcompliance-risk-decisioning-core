@@ -64,23 +64,24 @@ The backfill is independent of the other contexts' backfills and can be re-run u
 An outage or a credential problem therefore only delays events: fix the cause (the relay's WARN log names the
 exception) and the relay catches up by itself. `first_failed_at` (V6) is no longer written.
 
-Alerts (owning squad: `risk`, the Risk and Compliance Decisioning Squad). This chart ships no PrometheusRule. The age
-and send-failure rules are **Proposed** to the platform observability repository
-(fintechbankx-platform-observability-sre-operations) and stay proposed until platform's commit lands. The platform's outbox rules key on the `service_id` label, taken from the pod label
-`fintechbankx.io/service-id` (`svc-rsk-decisioning`, set by this chart and asserted in the deployability job):
-- Stalled relay, outage or broken credential:
-  `max(outbox_oldest_pending_age_seconds{service_id="svc-rsk-decisioning"}) > 900` for 5m, severity critical,
-  squad risk. The age is measured from `created_at` of the oldest row waiting for the relay.
-- Why it is stalled: `increase(outbox_send_failures_total{service_id="svc-rsk-decisioning"}[10m]) > 0`, severity
-  warning, squad risk (tag `exception` names the cause).
-- Parked events: no rule in this service. The platform alert **OutboxEventsParked** fires on any increase of
-  `outbox_parked_events_total` over 15 minutes, with no `for` clause, severity warning, routed by squad with a
-  namespace fallback. The counter (tag `exception`: the exception class, or `OperatorPark` for a manual park) counts
-  each parked row once; `outbox_parked_rows` is the gauge of rows parked now. Consumers are missing those decisions
-  until the rows are replayed.
-- Dependency: these series reach the managed Prometheus only once the AMP remote-write keep regex is widened from
-  `.*outbox_pending.*` to `outbox_.*` (platform owns that change). Scraping relies on the pod's `prometheus.io/*`
-  annotations, which the PodMonitor reads; keep them.
+Alerts (owning squad: `risk`, the Risk and Compliance Decisioning Squad). The rules live in the platform observability
+repository (fintechbankx-platform-observability-sre-operations) PR #11 at commit `eca7aa0`, not merged yet; this
+service ships no alert rule and this chart ships no PrometheusRule. The rules key on the `service_id` label, taken from
+the pod label `fintechbankx.io/service-id` (`svc-rsk-decisioning`, set by this chart and asserted in the deployability
+job), and route by squad:
+- **OutboxRelayStalled** (stalled relay, outage or broken credential):
+  `max(outbox_oldest_pending_age_seconds{service_id="svc-rsk-decisioning"}) > 900` for 5m, severity critical. The age
+  is measured from `created_at` of the oldest row waiting for the relay.
+- **OutboxSendFailures** (why it is stalled): any increase of
+  `outbox_send_failures_total{service_id="svc-rsk-decisioning"}` over 10m, severity warning (tag `exception` names the
+  cause).
+- **OutboxEventsParked**: any increase of `outbox_parked_events_total` over 15m, with no `for` clause, severity
+  warning. Operator parks also fire it. The counter (tag `exception`: the exception class, or `OperatorPark` for a
+  manual park) counts each parked row once; `outbox_parked_rows` is the gauge of rows parked now. Consumers are missing
+  those decisions until the rows are replayed.
+- Dependency: the same PR widens the AMP remote-write keep regex to the `outbox_` series, so they reach the managed
+  Prometheus once it merges. Scraping relies on the pod's `prometheus.io/*` annotations, which the PodMonitor reads;
+  keep them.
 
 Manual park (operator only, change-logged). If one row is stuck on a non-payload error that only it triggers and
 the owning squad decides to let later events through, park it by hand with the reason. The relay then skips it, and
