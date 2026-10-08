@@ -164,6 +164,18 @@ jobs:
             npx -y @asyncapi/cli@2.13.0 validate "$spec" --fail-severity=error
           done
 
+      - name: AsyncAPI breaking-change gate
+        if: ${{ hashFiles('api/asyncapi/*.yaml') != '' }}
+        env:
+          NPM_CONFIG_CACHE: /tmp/.npm
+          # A spec not yet on main is reported as "new file, skipped".
+          BASE_REF: origin/main
+        shell: bash
+        run: |
+          # Catalog gate (ADR-019 section 5), copied unchanged; run-breaking.mjs points it at api/asyncapi.
+          npm ci --prefix scripts/ci/asyncapi --no-audit --no-fund
+          node scripts/ci/asyncapi/run-breaking.mjs
+
       - name: Install oasdiff
         if: ${{ hashFiles('openapi/*.yaml') != '' || hashFiles('api/openapi/*.yaml') != '' || hashFiles('src/main/resources/openapi/*.yaml') != '' }}
         shell: bash

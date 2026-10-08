@@ -12,3 +12,6 @@ build/
 **/.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
+
+# AsyncAPI breaking gate dependencies (npm ci in CI)
+node_modules/
