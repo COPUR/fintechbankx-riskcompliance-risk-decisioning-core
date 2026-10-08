@@ -33,7 +33,8 @@ stated. A decision log that hides this would overstate what risk checked.
    caller. Both columns are NOT NULL.
 3. The facts (amount, currency, both flags) and the policy version
    (`rule_set_version`, V7; `rsk-policy-v2` since amount thresholds became per
-   currency) are stored with the decision. A retry must repeat every fact to get
+   currency, `rsk-policy-v3` since the suspicious patterns, decision 6) are
+   stored with the decision. `paymentType` (V9) is a fact too. A retry must repeat every fact to get
    the stored decision; anything else is `409 TRANSACTION_ALREADY_ASSESSED`. The
    caller and the rule-set version are recorded, not compared on retry.
 4. Amount thresholds are per currency, and only USD is configured
@@ -45,6 +46,16 @@ stated. A decision log that hides this would overstate what risk checked.
    thresholds is a policy change with a new `rule_set_version`.
 5. `evt.rsk.risk.assessed.v1` carries `attestationSource` (optional, contract
    1.0.0). Who attested (`attestedBy`) stays behind the risk API.
+6. `rsk-policy-v3` keeps v2's rules and restores the monolith's fraud refusals
+   (enterprise-loan-management-system
+   `payment-context/payment-infrastructure/.../external/FraudDetectionServiceAdapter.java:98-117`,
+   `isSuspiciousPattern`), which regression LP-05 found missing. In USD only,
+   like the thresholds: an amount above 10000 that is a multiple of 1000 is
+   `BLOCK` with `SUSPICIOUS_ROUND_AMOUNT` (10000.00 is not), and a
+   `MOBILE_PAYMENT` above 5000 is `BLOCK` with `SUSPICIOUS_MOBILE_AMOUNT`
+   (5000.00 is not). The score stays v2's; the pattern decides. This needs the
+   caller-stated `paymentType` (the monolith's PaymentType values), which is
+   required and fails closed like decision 1.
 
 ## Consequences
 

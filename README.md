@@ -62,13 +62,15 @@ Bu repository, FinTechBankX DDD/EDA dönüşümünde **svc-rsk-decisioning** ser
 ## Calling the service
 
 - `transactionId` is unique across **all** callers: the first assessment of an id is the decision of record for everyone. Callers must namespace their ids, for example `PAY-<payment id>`.
-- A retry is answered with the stored decision only when it repeats every input: amount (compared by value), currency, `highRiskCountry` and `velocityScore`. Any other input under the same id is `409 TRANSACTION_ALREADY_ASSESSED`.
+- A retry is answered with the stored decision only when it repeats every input: amount (compared by value), currency, `highRiskCountry`, `velocityScore` and `paymentType`. Any other input under the same id is `409 TRANSACTION_ALREADY_ASSESSED`.
 - `409 DUPLICATE_REQUEST` means a concurrent first request for the same id won. Retry to get its decision.
 - Inputs are refused with `400 INVALID_REQUEST` rather than rounded or truncated:
   - `transactionId` longer than 128 characters;
   - currency that is not an upper-case ISO 4217 code;
   - amount with more than 15 integer digits or more than 4 decimals;
-  - `velocityScore` outside 0..100.
+  - `velocityScore` outside 0..100;
+  - `paymentType` omitted, null or not one of `TRANSFER`, `WIRE_TRANSFER`, `ACH`, `CHECK`, `CREDIT_CARD`, `DEBIT_CARD`, `MOBILE_PAYMENT`, `LOAN_PAYMENT`, `BILL_PAYMENT` (the monolith's PaymentType values).
+- Policy `rsk-policy-v3` keeps v2's scoring and restores the monolith's suspicious patterns as `BLOCK` (USD only): a round amount (a multiple of 1000 above 10000, `SUSPICIOUS_ROUND_AMOUNT`) and a `MOBILE_PAYMENT` above 5000 (`SUSPICIOUS_MOBILE_AMOUNT`). See ADR 0001.
 - Tokens must carry `svc-rsk-decisioning` in `aud` (`OIDC_AUDIENCE`).
   - Bank staff need `BANKER` or `ADMIN`.
   - Services need `SERVICE` and a client id (`azp`) listed in `SERVICE_CALLERS` (default `svc-pay-initiation-settlement`).
