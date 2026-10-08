@@ -27,7 +27,7 @@ class RiskPolicyServiceTest {
 
     @Test
     void shouldRequireReviewForMediumRiskTransaction() {
-        var command = new RiskEvaluationCommand("TX-REV", new BigDecimal("12000"), "USD", false, 70, "svc-pay-initiation-settlement");
+        var command = new RiskEvaluationCommand("TX-REV", new BigDecimal("12000.50"), "USD", false, 70, "svc-pay-initiation-settlement");
 
         var assessment = service.evaluate(command);
 
@@ -53,16 +53,19 @@ class RiskPolicyServiceTest {
 
     @Test
     void everyDecisionRecordsTheRuleSetThatMadeIt() {
-        assertThat(RiskPolicyService.RULE_SET_VERSION).isEqualTo("rsk-policy-v2");
-        assertThat(service.evaluate(command("100", "USD", false, 0)).getRuleSetVersion()).isEqualTo("rsk-policy-v2");
-        assertThat(service.evaluate(command("100", "JPY", true, 80)).getRuleSetVersion()).isEqualTo("rsk-policy-v2");
+        assertThat(RiskPolicyService.RULE_SET_VERSION).isEqualTo("rsk-policy-v3");
+        assertThat(service.evaluate(command("100", "USD", false, 0)).getRuleSetVersion()).isEqualTo("rsk-policy-v3");
+        assertThat(service.evaluate(command("100", "JPY", true, 80)).getRuleSetVersion()).isEqualTo("rsk-policy-v3");
     }
 
     @Test
     void usdThresholdsAreTheCurrentValuesAndExclusive() {
         assertThat(service.evaluate(command("10000.00", "USD", false, 0)).getReasons()).isEmpty();
         assertThat(service.evaluate(command("10000.01", "USD", false, 0)).getReasons()).containsExactly("HIGH_AMOUNT");
-        assertThat(service.evaluate(command("50000.00", "USD", false, 0)).getReasons()).containsExactly("HIGH_AMOUNT");
+        assertThat(service.evaluate(command("49999.99", "USD", false, 0)).getReasons()).containsExactly("HIGH_AMOUNT");
+        assertThat(service.evaluate(command("50000.00", "USD", false, 0)).getReasons())
+                .as("50000.00 is not above the very-high threshold (it is a round amount, see v3)")
+                .containsExactly("HIGH_AMOUNT", "SUSPICIOUS_ROUND_AMOUNT");
         assertThat(service.evaluate(command("50000.01", "USD", false, 0)).getReasons())
                 .containsExactly("HIGH_AMOUNT", "VERY_HIGH_AMOUNT");
     }
@@ -105,6 +108,40 @@ class RiskPolicyServiceTest {
         assertThat(policy.evaluate(command("7500001", "JPY", false, 0)).getReasons())
                 .containsExactly("HIGH_AMOUNT", "VERY_HIGH_AMOUNT");
         assertThat(policy.evaluate(command("9000", "KWD", false, 0)).getReasons()).containsExactly("UNSUPPORTED_CURRENCY");
+    }
+
+    /**
+     * rsk-policy-v3, monolith parity (payment-context FraudDetectionServiceAdapter.isSuspiciousPattern):
+     * a round amount, a multiple of 1000 above 10000, is refused as fraud. LP-05 found 12000.00 USD ALLOWed.
+     */
+    @Test
+    void aRoundUsdAmountAbove10000IsBlockedAsSuspicious() {
+        var twelveThousand = service.evaluate(command("12000.00", "USD", false, 0));
+
+        assertThat(twelveThousand.getDecision()).isEqualTo(RiskDecision.BLOCK);
+        assertThat(twelveThousand.getReasons()).containsExactly("HIGH_AMOUNT", "SUSPICIOUS_ROUND_AMOUNT");
+        assertThat(twelveThousand.getScore()).as("the score is the v2 score; the pattern decides").isEqualTo(30);
+        assertThat(service.evaluate(command("11000", "USD", false, 0)).getDecision()).isEqualTo(RiskDecision.BLOCK);
+        assertThat(service.evaluate(command("1000000.0000", "USD", false, 0)).getReasons())
+                .contains("SUSPICIOUS_ROUND_AMOUNT");
+    }
+
+    @Test
+    void roundAmountEdges() {
+        var tenThousand = service.evaluate(command("10000.00", "USD", false, 0));
+        assertThat(tenThousand.getReasons()).as("10000 is not above 10000").isEmpty();
+        assertThat(tenThousand.getDecision()).isEqualTo(RiskDecision.ALLOW);
+        assertThat(service.evaluate(command("12000.50", "USD", false, 0)).getReasons()).containsExactly("HIGH_AMOUNT");
+        assertThat(service.evaluate(command("10500.00", "USD", false, 0)).getReasons()).containsExactly("HIGH_AMOUNT");
+        assertThat(service.evaluate(command("9000.00", "USD", false, 0)).getDecision()).isEqualTo(RiskDecision.ALLOW);
+    }
+
+    @Test
+    void theRoundAmountRuleIsUsdOnlyLikeTheThresholds() {
+        var yen = service.evaluate(command("12000", "JPY", false, 0));
+
+        assertThat(yen.getReasons()).containsExactly("UNSUPPORTED_CURRENCY");
+        assertThat(yen.getDecision()).isEqualTo(RiskDecision.REVIEW);
     }
 
     @Test
