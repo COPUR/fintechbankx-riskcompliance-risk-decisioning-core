@@ -1,6 +1,6 @@
 package com.bank.risk.infrastructure.web.dto;
 
-import com.bank.risk.domain.command.RiskEvaluationCommand;
+import com.bank.risk.domain.port.in.RiskEvaluationCommand;
 
 import java.math.BigDecimal;
 

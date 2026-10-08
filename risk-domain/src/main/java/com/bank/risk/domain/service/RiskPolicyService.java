@@ -2,7 +2,7 @@ package com.bank.risk.domain.service;
 
 import com.bank.risk.domain.RiskAssessment;
 import com.bank.risk.domain.RiskDecision;
-import com.bank.risk.domain.command.RiskEvaluationCommand;
+import com.bank.risk.domain.port.in.RiskEvaluationCommand;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;

@@ -3,7 +3,7 @@ package com.bank.risk;
 import com.bank.risk.application.RiskAssessmentService;
 import com.bank.risk.domain.RiskAssessment;
 import com.bank.risk.domain.RiskDecision;
-import com.bank.risk.domain.command.RiskEvaluationCommand;
+import com.bank.risk.domain.port.in.RiskEvaluationCommand;
 import com.bank.risk.domain.port.in.RiskAssessmentUseCase;
 import com.bank.risk.domain.port.out.RiskAssessmentRepository;
 import com.bank.risk.domain.port.out.RiskEventPublisher;

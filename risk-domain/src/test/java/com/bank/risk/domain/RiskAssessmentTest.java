@@ -1,6 +1,6 @@
 package com.bank.risk.domain;
 
-import com.bank.risk.domain.command.RiskEvaluationCommand;
+import com.bank.risk.domain.port.in.RiskEvaluationCommand;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;

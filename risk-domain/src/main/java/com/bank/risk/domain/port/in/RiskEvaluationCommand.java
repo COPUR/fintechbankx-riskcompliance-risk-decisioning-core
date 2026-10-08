@@ -1,4 +1,4 @@
-package com.bank.risk.domain.command;
+package com.bank.risk.domain.port.in;
 
 import java.math.BigDecimal;
 import java.util.Currency;
