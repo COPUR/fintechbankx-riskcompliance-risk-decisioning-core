@@ -90,6 +90,15 @@ class KafkaProfilesTest {
         assertThat(strimzi.getProperty("spring.kafka.ssl.trust-store-certificates")).hasToString("${KAFKA_TLS_CA}");
     }
 
+    /** Platform alert rules select on app and squad, common tags on every meter, set by the chart's env. */
+    @Test
+    void everyMeterCarriesTheAppAndSquadCommonTagsFromTheEnvironment() {
+        PropertySource<?> base = documents().getFirst();
+
+        assertThat(base.getProperty("management.metrics.tags.app")).hasToString("${METRICS_APP:risk-decisioning-service}");
+        assertThat(base.getProperty("management.metrics.tags.squad")).hasToString("${METRICS_SQUAD:risk}");
+    }
+
     private static KafkaProperties bind(String profile) {
         StandardEnvironment environment = new StandardEnvironment();
         MutablePropertySources sources = environment.getPropertySources();

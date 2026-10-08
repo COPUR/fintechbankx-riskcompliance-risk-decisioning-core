@@ -163,7 +163,7 @@ class OutboxRelayTest {
 
         assertThat(first.getParkedAt()).isNull();
         assertThat(first.getLastError()).isNull();
-        assertThat(registry.get("outbox.publish.failures").tag("exception", "TimeoutException").counter().count())
+        assertThat(registry.get("outbox.send.failures").tag("exception", "TimeoutException").counter().count())
             .isEqualTo(1.0);
         verify(kafka, times(1)).send(any(ProducerRecord.class));
     }
@@ -300,6 +300,23 @@ class OutboxRelayTest {
     }
 
     @Test
+    void aNonPayloadFailureMarksNothingOnTheRow() {
+        OutboxEventJpaEntity row = row("RISK-1");
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(row));
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.failedFuture(producerFailure(new NetworkException("broker down"))));
+
+        relay.relayOnce();
+
+        assertThat(row.getAttempts()).isZero();
+        assertThat(row.getFirstFailedAt()).isNull();
+        assertThat(row.getLastError()).isNull();
+        assertThat(row.getParkedAt()).isNull();
+        assertThat(row.getPublishedAt()).isNull();
+    }
+
+    @Test
     void theBackoffMustBePositiveAndItsCapNotBelowTheBase() {
         for (Duration[] invalid : List.of(new Duration[] {Duration.ZERO, BACKOFF_CAP},
                 new Duration[] {Duration.ofMinutes(10), Duration.ofMinutes(5)})) {
@@ -381,12 +398,13 @@ class OutboxRelayTest {
         relay.relayOnce();
         relay.relayOnce();
 
-        assertThat(registry.get("outbox.publish.failures").tag("exception", "RecordTooLargeException")
-            .tag("service", "svc-rsk-decisioning").counter().count()).isEqualTo(1.0);
-        assertThat(registry.get("outbox.publish.failures").tag("exception", "NetworkException").counter().count())
+        assertThat(registry.get("outbox.send.failures").tag("exception", "RecordTooLargeException").counter().count())
             .isEqualTo(1.0);
-        assertThat(registry.get("outbox.publish.failures").counters())
-            .allMatch(counter -> counter.getId().getTags().size() == 2, "only service and exception tags, no ids");
+        assertThat(registry.get("outbox.send.failures").tag("exception", "NetworkException").counter().count())
+            .isEqualTo(1.0);
+        assertThat(registry.get("outbox.send.failures").counters())
+            .allMatch(counter -> counter.getId().getTags().stream().map(io.micrometer.core.instrument.Tag::getKey)
+                .toList().equals(List.of("exception")), "one tag, exception; app and squad come as common tags");
     }
 
     /** A clock the test moves forward. */
