@@ -289,6 +289,53 @@ class RiskOutboxIT {
         assertThat(outbox.countByPublishedAtIsNull()).isZero();
     }
 
+    /**
+     * Platform ruling: outbox.parked.events counts each parked row once. A
+     * relay park is written with park_counted = true; an operator park (the
+     * runbook UPDATE) is counted by the next tick, as OperatorPark, and never
+     * again by any replica.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void eachParkedRowIsCountedOnceWhetherTheRelayOrAnOperatorParkedIt() throws Exception {
+        assess("PAY-CNT-1", "10.00").andExpect(status().isCreated());
+        assess("PAY-CNT-2", "20.00").andExpect(status().isCreated());
+        assess("PAY-CNT-3", "30.00").andExpect(status().isCreated());
+        // Runbook "Manual park", verbatim apart from the placeholders.
+        jdbc.update("UPDATE " + OUTBOX + " SET parked_at = now(), last_error = left('manual: test, CHG-1', 512)"
+            + " WHERE event_id = (select event_id from " + OUTBOX
+            + " where payload -> 'data' ->> 'transactionId' = 'PAY-CNT-1') AND published_at IS NULL AND parked_at IS NULL");
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.failedFuture(new KafkaProducerException(
+                new ProducerRecord<>("evt.rsk.risk.assessed.v1", "k", "v"), "Failed to send",
+                new RecordTooLargeException("too large"))))
+            .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry metrics =
+            new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
+            Clock.systemUTC(), 10, Duration.ofSeconds(1), Duration.ofDays(7),
+            Duration.ofSeconds(1), Duration.ofMinutes(5), metrics);
+
+        assertThat(relay.relayOnce()).isEqualTo(1);
+        relay.relayOnce();
+        relay.relayOnce();
+
+        assertThat(metrics.get("outbox.parked.events").tag("exception", "OperatorPark").counter().count()).isEqualTo(1.0);
+        assertThat(metrics.get("outbox.parked.events").tag("exception", "RecordTooLargeException").counter().count())
+            .isEqualTo(1.0);
+        assertThat(jdbc.queryForObject("select count(*) from " + OUTBOX
+            + " where parked_at is not null and park_counted", Integer.class)).isEqualTo(2);
+
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry otherReplica =
+            new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), Clock.systemUTC(), 10,
+            Duration.ofSeconds(1), Duration.ofDays(7), Duration.ofSeconds(1), Duration.ofMinutes(5), otherReplica)
+            .relayOnce();
+        assertThat(otherReplica.get("outbox.parked.events").counters())
+            .as("another replica or a restart never counts a parked row again")
+            .allMatch(counter -> counter.count() == 0.0);
+    }
+
     @Test
     void theOldestPendingAgeIsZeroWhenNothingWaitsAndGrowsWithTheOldestUnsentRow() throws Exception {
         assertThat(outbox.oldestPendingAgeSeconds()).isZero();
@@ -298,7 +345,7 @@ class RiskOutboxIT {
 
         assertThat(outbox.oldestPendingAgeSeconds()).isBetween(7200.0, 7300.0);
         jdbc.update("update " + OUTBOX + " set parked_at = now()");
-        assertThat(outbox.oldestPendingAgeSeconds()).as("parked rows are counted by outbox.parked.events instead").isZero();
+        assertThat(outbox.oldestPendingAgeSeconds()).as("parked rows are counted by outbox.parked.rows instead").isZero();
     }
 
     /** ADR-021 decision 4 against PostgreSQL: a non-payload failure stops the batch and writes nothing to the row. */

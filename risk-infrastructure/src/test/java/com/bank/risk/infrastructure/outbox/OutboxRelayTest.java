@@ -407,6 +407,87 @@ class OutboxRelayTest {
                 .toList().equals(List.of("exception")), "one tag, exception; app and squad come as common tags");
     }
 
+    @Test
+    void aRelayParkCountsOneParkedEventTaggedWithItsExceptionAndMarksTheRowCounted() {
+        OutboxEventJpaEntity poison = row("RISK-1");
+        OutboxEventJpaEntity next = row("RISK-2");
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(poison, next)).thenReturn(List.of());
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.failedFuture(producerFailure(new RecordTooLargeException("too large"))))
+            .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
+
+        relay.relayOnce();
+        relay.relayOnce();
+
+        assertThat(registry.get("outbox.parked.events").tag("exception", "RecordTooLargeException").counter().count())
+            .isEqualTo(1.0);
+        assertThat(poison.isParkCounted()).as("written as counted in the same update as parked_at").isTrue();
+        assertThat(next.isParkCounted()).isFalse();
+        assertThat(registry.get("outbox.parked.events").counters())
+            .allMatch(counter -> counter.getId().getTags().stream().map(io.micrometer.core.instrument.Tag::getKey)
+                .toList().equals(List.of("exception")), "one tag, exception");
+    }
+
+    @Test
+    void anOperatorParkIsCountedExactlyOnceAsOperatorPark() {
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of());
+        // The UPDATE marks the uncounted rows, so a second tick finds none of them.
+        when(outbox.markOperatorParksCounted()).thenReturn(2).thenReturn(0);
+
+        relay.relayOnce();
+        relay.relayOnce();
+
+        assertThat(registry.get("outbox.parked.events").tag("exception", "OperatorPark").counter().count())
+            .isEqualTo(2.0);
+        verify(outbox, times(2)).markOperatorParksCounted();
+    }
+
+    @Test
+    void operatorParksAreNotCountedByAReplicaWithoutTheLock() {
+        when(outbox.tryRelayLock(anyLong())).thenReturn(false);
+
+        relay.relayOnce();
+
+        verify(outbox, never()).markOperatorParksCounted();
+        assertThat(registry.get("outbox.parked.events").tag("exception", "OperatorPark").counter().count()).isZero();
+    }
+
+    @Test
+    void parkedCountsAreRecordedOnlyOnceTheTransactionCommits() {
+        TransactionTemplate failingCommit = new TransactionTemplate() {
+            @Override
+            public <T> T execute(TransactionCallback<T> action) {
+                action.doInTransaction(new SimpleTransactionStatus());
+                throw new org.springframework.transaction.TransactionSystemException("commit failed");
+            }
+        };
+        OutboxRelay rolledBack = new OutboxRelay(outbox, kafka, failingCommit, clock, 50,
+            Duration.ofSeconds(1), Duration.ofDays(7), BACKOFF_BASE, BACKOFF_CAP, registry);
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.markOperatorParksCounted()).thenReturn(1);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(row("RISK-1")));
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.failedFuture(producerFailure(new RecordTooLargeException("too large"))));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(rolledBack::relayOnce)
+            .hasMessageContaining("commit failed");
+
+        assertThat(registry.get("outbox.parked.events").counters())
+            .as("rolled-back parks are counted by the run that commits them, never twice")
+            .allMatch(counter -> counter.count() == 0.0);
+    }
+
+    @Test
+    void parkedCountersStartAtZeroSoTheFirstParkIsAnIncrease() {
+        for (String cause : List.of("OperatorPark", "RecordTooLargeException", "SerializationException",
+                "InvalidTopicException")) {
+            assertThat(registry.get("outbox.parked.events").tag("exception", cause).counter().count())
+                .as(cause).isZero();
+        }
+    }
+
     /** A clock the test moves forward. */
     static final class MutableClock extends Clock {
         private Instant now;

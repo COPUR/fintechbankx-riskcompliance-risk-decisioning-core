@@ -46,16 +46,18 @@ class OutboxConfigurationTest {
     }
 
     @Test
-    void parkedGaugeIsExportedAsOutboxParkedEventsForThisService() {
+    void parkedGaugeIsExportedAsOutboxParkedRowsForThisService() {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         when(outbox.countByPublishedAtIsNullAndParkedAtIsNotNull()).thenReturn(2L);
 
         configuration.riskOutboxParkedGauge(registry, outbox);
 
-        Gauge gauge = registry.get("outbox.parked.events").tag("service", "svc-rsk-decisioning").gauge();
+        Gauge gauge = registry.get("outbox.parked.rows").tag("service", "svc-rsk-decisioning").gauge();
         assertThat(gauge.value()).isEqualTo(2.0);
         assertThat(gauge.getId().getDescription())
             .isEqualTo("Risk events parked on a payload error or by an operator; replay by hand");
+        assertThat(registry.find("outbox.parked.events").meters())
+            .as("outbox.parked.events is the relay's counter, not a gauge").isEmpty();
     }
 
     @Test
