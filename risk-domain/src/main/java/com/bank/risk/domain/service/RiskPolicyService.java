@@ -20,6 +20,13 @@ public class RiskPolicyService {
 
     public static final String UNSUPPORTED_CURRENCY = "UNSUPPORTED_CURRENCY";
 
+    /**
+     * Version of these rules, stored with every decision. rsk-policy-v1 compared
+     * every amount with 10000/50000 whatever its currency; v2 has per-currency
+     * thresholds. Change it whenever a rule or threshold changes.
+     */
+    public static final String RULE_SET_VERSION = "rsk-policy-v2";
+
     /** The thresholds the policy has always used, now stated as USD (monolith evidence: home currency USD). */
     public static final Map<String, AmountThresholds> USD_THRESHOLDS = Map.of(
             "USD", new AmountThresholds(new BigDecimal("10000"), new BigDecimal("50000")));
@@ -81,6 +88,6 @@ public class RiskPolicyService {
             decision = RiskDecision.ALLOW;
         }
 
-        return RiskAssessment.create(command, score, decision, reasons);
+        return RiskAssessment.create(command, score, decision, reasons, RULE_SET_VERSION);
     }
 }

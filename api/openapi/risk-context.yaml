@@ -224,6 +224,12 @@ components:
             Who vouches for the risk facts the decision rests on. CALLER_ATTESTED:
             highRiskCountry and velocityScore were stated by the caller and not
             verified by this service. Clients must accept values they do not know.
+        ruleSetVersion:
+          type: string
+          description: |-
+            Policy rule set that made the decision, for example rsk-policy-v2
+            (per-currency amount thresholds). A retry returns the stored
+            decision with the version it was made under.
         attestedBy:
           type: string
           description: |-

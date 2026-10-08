@@ -15,7 +15,8 @@ public record RiskAssessmentResponse(
         Instant assessedAt,
         String attestationSource,
         // Absent, not null, for decisions stored before the attester was recorded.
-        @JsonInclude(JsonInclude.Include.NON_NULL) String attestedBy
+        @JsonInclude(JsonInclude.Include.NON_NULL) String attestedBy,
+        String ruleSetVersion
 ) {
     public static RiskAssessmentResponse from(RiskAssessment assessment) {
         return new RiskAssessmentResponse(
@@ -26,7 +27,8 @@ public record RiskAssessmentResponse(
                 assessment.getReasons(),
                 assessment.getAssessedAt(),
                 assessment.getAttestationSource().name(),
-                assessment.getAttestedBy()
+                assessment.getAttestedBy(),
+                assessment.getRuleSetVersion()
         );
     }
 }

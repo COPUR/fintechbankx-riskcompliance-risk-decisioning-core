@@ -26,7 +26,8 @@ final class RiskAssessmentPersistenceMapper {
                 List.copyOf(assessment.getReasons()),
                 assessment.getAssessedAt(),
                 assessment.getAttestationSource().name(),
-                assessment.getAttestedBy());
+                assessment.getAttestedBy(),
+                assessment.getRuleSetVersion());
     }
 
     static RiskAssessment toDomain(RiskAssessmentJpaEntity row) {
@@ -42,6 +43,7 @@ final class RiskAssessmentPersistenceMapper {
                 row.getReasons() == null ? List.of() : row.getReasons(),
                 row.getAssessedAt(),
                 AttestationSource.valueOf(row.getAttestationSource()),
-                row.getAttestedBy()));
+                row.getAttestedBy(),
+                row.getRuleSetVersion()));
     }
 }

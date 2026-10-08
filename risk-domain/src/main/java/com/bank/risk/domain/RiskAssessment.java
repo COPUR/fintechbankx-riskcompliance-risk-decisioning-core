@@ -23,6 +23,7 @@ public final class RiskAssessment {
     private final Instant assessedAt;
     private final AttestationSource attestationSource;
     private final String attestedBy;
+    private final String ruleSetVersion;
     private final List<RiskDomainEvent> domainEvents = new ArrayList<>();
 
     private RiskAssessment(
@@ -37,7 +38,8 @@ public final class RiskAssessment {
             List<String> reasons,
             Instant assessedAt,
             AttestationSource attestationSource,
-            String attestedBy
+            String attestedBy,
+            String ruleSetVersion
     ) {
         this.id = Objects.requireNonNull(id, "id is required");
         if (transactionId == null || transactionId.isBlank()) {
@@ -66,6 +68,10 @@ public final class RiskAssessment {
         this.assessedAt = Objects.requireNonNull(assessedAt, "assessedAt is required");
         this.attestationSource = Objects.requireNonNull(attestationSource, "attestationSource is required");
         this.attestedBy = attestedBy;
+        if (ruleSetVersion == null || ruleSetVersion.isBlank()) {
+            throw new IllegalArgumentException("ruleSetVersion is required");
+        }
+        this.ruleSetVersion = ruleSetVersion;
     }
 
     /**
@@ -76,7 +82,8 @@ public final class RiskAssessment {
             RiskEvaluationCommand inputs,
             int score,
             RiskDecision decision,
-            List<String> reasons
+            List<String> reasons,
+            String ruleSetVersion
     ) {
         Objects.requireNonNull(inputs, "inputs are required");
         RiskAssessment assessment = new RiskAssessment(
@@ -94,7 +101,8 @@ public final class RiskAssessment {
                 Instant.now().truncatedTo(ChronoUnit.MICROS),
                 // The policy only applies thresholds to the caller's statements.
                 AttestationSource.CALLER_ATTESTED,
-                inputs.attestedBy()
+                inputs.attestedBy(),
+                ruleSetVersion
         );
         assessment.domainEvents.add(assessment.assessedEvent());
         return assessment;
@@ -119,7 +127,8 @@ public final class RiskAssessment {
                 snapshot.reasons(),
                 snapshot.assessedAt(),
                 snapshot.attestationSource(),
-                snapshot.attestedBy()
+                snapshot.attestedBy(),
+                snapshot.ruleSetVersion()
         );
     }
 
@@ -210,6 +219,11 @@ public final class RiskAssessment {
     /** The calling client (azp) or staff subject that stated the risk facts; null for decisions stored before V5. */
     public String getAttestedBy() {
         return attestedBy;
+    }
+
+    /** The policy rule set that made this decision; recorded, not compared on retry. */
+    public String getRuleSetVersion() {
+        return ruleSetVersion;
     }
 
     public boolean isBlocked() {

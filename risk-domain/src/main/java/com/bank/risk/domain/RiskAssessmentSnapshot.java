@@ -21,6 +21,7 @@ public record RiskAssessmentSnapshot(
         Instant assessedAt,
         AttestationSource attestationSource,
         /** Null only for decisions stored before the attester was recorded (V5). */
-        String attestedBy
+        String attestedBy,
+        String ruleSetVersion
 ) {
 }
