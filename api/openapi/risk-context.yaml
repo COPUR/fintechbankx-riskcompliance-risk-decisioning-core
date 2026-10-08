@@ -21,7 +21,6 @@ paths:
         its decision.
       security:
         - bearerAuth: []
-        - dpopAuth: []
       parameters:
         - $ref: '#/components/parameters/Authorization'
         - $ref: '#/components/parameters/DPoP'
@@ -78,7 +77,6 @@ paths:
       operationId: findRiskAssessment
       security:
         - bearerAuth: []
-        - dpopAuth: []
       parameters:
         - $ref: '#/components/parameters/Authorization'
         - $ref: '#/components/parameters/DPoP'
@@ -116,10 +114,6 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-    dpopAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: DPoP
   parameters:
     Authorization:
       name: Authorization
