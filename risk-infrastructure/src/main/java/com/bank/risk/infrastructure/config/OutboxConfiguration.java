@@ -79,12 +79,12 @@ public class OutboxConfiguration {
 
     /**
      * The relay runs in every replica; the advisory lock lets only one of
-     * them publish at a time. Disable with risk.outbox.relay.enabled=false
-     * (tests, the first cutover step, or a dedicated relay deployment).
+     * them publish at a time. Off unless risk.outbox.relay.enabled=true (the
+     * chart sets it at runbook step 4; local runs set OUTBOX_RELAY_ENABLED=true).
      */
     @Configuration
     @EnableScheduling
-    @ConditionalOnProperty(name = "risk.outbox.relay.enabled", havingValue = "true", matchIfMissing = true)
+    @ConditionalOnProperty(name = "risk.outbox.relay.enabled", havingValue = "true", matchIfMissing = false)
     static class RelayConfiguration {
 
         @Bean
