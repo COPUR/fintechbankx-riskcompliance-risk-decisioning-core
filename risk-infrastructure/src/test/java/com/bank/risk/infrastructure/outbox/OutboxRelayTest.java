@@ -164,9 +164,60 @@ class OutboxRelayTest {
         return Stream.of(
             new RecordTooLargeException("too large"),
             new SerializationException("cannot serialize"),
-            new org.apache.kafka.common.errors.InvalidTopicException("bad topic"),
+            new org.apache.kafka.common.errors.InvalidTopicException("bad topic"));
+    }
+
+    /**
+     * Not payload-specific: a credential, IAM or ACL problem (or anything not
+     * classified) affects every row alike, so parking it would park the whole
+     * queue one row at a time. It stops the batch like a retriable failure.
+     */
+    static Stream<RuntimeException> notPayloadSpecificFailures() {
+        return Stream.of(
+            new org.apache.kafka.common.errors.SaslAuthenticationException("bad IAM signature"),
+            new org.apache.kafka.common.errors.AuthenticationException("not authenticated"),
+            new org.apache.kafka.common.errors.AuthorizationException("not authorized"),
             new TopicAuthorizationException(Set.of("evt.rsk.risk.assessed.v1")),
-            new IllegalStateException("not a Kafka retriable error"));
+            new org.apache.kafka.common.KafkaException("unclassified Kafka failure"),
+            new IllegalStateException("any other exception"));
+    }
+
+    @ParameterizedTest
+    @MethodSource("notPayloadSpecificFailures")
+    void anAuthOrUnclassifiedFailureStopsTheBatchAndParksNothing(RuntimeException failure) {
+        OutboxEventJpaEntity first = row("RISK-1");
+        OutboxEventJpaEntity next = row("RISK-2");
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(first, next));
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.failedFuture(producerFailure(failure)))
+            .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
+
+        assertThat(relay.relayOnce()).isZero();
+
+        assertThat(first.getParkedAt()).isNull();
+        assertThat(first.getAttempts()).isEqualTo(1);
+        assertThat(first.getFirstFailedAt()).isEqualTo(NOW);
+        assertThat(next.getParkedAt()).isNull();
+        assertThat(next.getPublishedAt()).as("the batch stopped at the failing row").isNull();
+        assertThat(next.getAttempts()).isZero();
+        verify(kafka, times(1)).send(any(ProducerRecord.class));
+    }
+
+    @Test
+    void anAuthFailureParksOnlyPastTheRetryableCeiling() {
+        OutboxEventJpaEntity row = row("RISK-1");
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(row));
+        when(kafka.send(any(ProducerRecord.class))).thenAnswer(call -> CompletableFuture.failedFuture(
+            producerFailure(new org.apache.kafka.common.errors.SaslAuthenticationException("bad IAM signature"))));
+
+        relayAt(NOW).relayOnce();
+        relayAt(NOW.plus(PARK_AFTER)).relayOnce();
+        assertThat(row.getParkedAt()).isNull();
+
+        relayAt(NOW.plus(PARK_AFTER).plusSeconds(1)).relayOnce();
+        assertThat(row.getParkedAt()).isEqualTo(NOW.plus(PARK_AFTER).plusSeconds(1));
     }
 
     @ParameterizedTest
