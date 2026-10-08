@@ -63,7 +63,8 @@ class RiskEventEnvelopeFactoryTest {
             .get("data");
 
         assertThat(data.fieldNames()).toIterable().containsExactly("assessmentId", "transactionId", "decision",
-            "score", "amount", "reasons", "assessedAt");
+            "score", "amount", "reasons", "assessedAt", "attestationSource");
+        assertThat(data.get("attestationSource").asText()).isEqualTo("CALLER_ATTESTED");
         assertThat(data.get("assessmentId").asText()).isEqualTo(assessment.getId().getValue());
         assertThat(data.get("transactionId").asText()).isEqualTo("PAY-ENV-1");
         assertThat(data.get("decision").asText()).isEqualTo("BLOCK");

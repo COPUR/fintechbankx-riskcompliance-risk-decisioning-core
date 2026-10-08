@@ -160,7 +160,7 @@ public final class RiskAssessment {
 
     private RiskAssessedEvent assessedEvent() {
         return new RiskAssessedEvent(UUID.randomUUID(), assessedAt, id, transactionId, decision, score,
-                amount, currency, reasons, assessedAt);
+                amount, currency, reasons, assessedAt, attestationSource);
     }
 
     /** Events raised since the assessment was created, oldest first; publish them after saving. */

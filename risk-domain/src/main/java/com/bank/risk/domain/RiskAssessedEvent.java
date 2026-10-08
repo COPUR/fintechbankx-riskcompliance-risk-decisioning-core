@@ -21,7 +21,8 @@ public record RiskAssessedEvent(
         BigDecimal amount,
         String currency,
         List<String> reasons,
-        Instant assessedAt
+        Instant assessedAt,
+        AttestationSource attestationSource
 ) implements RiskDomainEvent {
 
     public RiskAssessedEvent {
@@ -34,5 +35,6 @@ public record RiskAssessedEvent(
         Objects.requireNonNull(currency, "currency is required");
         reasons = List.copyOf(Objects.requireNonNull(reasons, "reasons are required"));
         Objects.requireNonNull(assessedAt, "assessedAt is required");
+        Objects.requireNonNull(attestationSource, "attestationSource is required");
     }
 }

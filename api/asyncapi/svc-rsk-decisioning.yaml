@@ -6,7 +6,7 @@ asyncapi: 3.0.0
 id: urn:fintechbankx:asyncapi:svc-rsk-decisioning
 info:
   title: svc-rsk-decisioning events
-  version: 1.0.0
+  version: 1.1.0
   description: |-
     Event contract for svc-rsk-decisioning (repository fintechbankx-riskcompliance-risk-decisioning-core, canonical name fintechbankx-risk-decisioning-service).
 
@@ -121,6 +121,14 @@ components:
           type: string
           format: date-time
           description: When the decision was made (UTC).
+        attestationSource:
+          type: string
+          enum:
+          - CALLER_ATTESTED
+          description: 'Optional, since 1.1.0. Who vouches for the risk facts the decision rests on.
+            CALLER_ATTESTED: highRiskCountry and velocityScore were stated by the caller, not verified by
+            risk (ADR 0001). The caller''s id is available from the risk API only. Consumers must accept
+            values they do not know.'
       required:
       - assessmentId
       - transactionId
