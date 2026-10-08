@@ -73,14 +73,14 @@ externalSecret:
 topologySpread:
   maxSkew: 1
 
-# Istio: STRICT mTLS for this workload (never weaker than the mesh default) and
-# an allow-list of callers by mesh identity, with a NetworkPolicy backstop
-# (templates/mesh-policies.yaml). The platform mesh repo owns the namespace
-# default-deny; these rules only narrow it for this workload.
-mesh:
+# Mesh-wide STRICT mTLS, default deny and the ALLOW rules per caller principal
+# are owned by fintechbankx-platform-mesh-security-service-mesh; this chart
+# ships neither a PeerAuthentication nor an AuthorizationPolicy. The
+# NetworkPolicy (templates/networkpolicy.yaml) is a CNI-level backstop that
+# admits only the namespaces of those callers.
+networkPolicy:
   enabled: true
-  # Prometheus scrapes the management port from here (platform contract).
   monitoringNamespace: observability
-  allowedCallers:
-    - namespace: payments
-      serviceAccount: payment-initiation-settlement-service
+  callerNamespaces:
+    - istio-ingress   # istio-ingressgateway (staff UIs)
+    - payments        # payment-initiation-settlement-service
