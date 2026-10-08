@@ -66,4 +66,27 @@ class RiskAssessmentRehydrateTest {
                 RiskDecision.ALLOW, List.of(), DECIDED)))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("velocityScore");
     }
+    @Test
+    void aRetryWithEveryInputRepeatedGetsTheStoredDecisionBack() {
+        RiskAssessment stored = RiskAssessment.rehydrate(new RiskAssessmentSnapshot(
+                RiskAssessmentId.of("RISK-7"), "TX-7", new BigDecimal("12000.00"), "AED", false, 0, 85,
+                RiskDecision.BLOCK, List.of("HIGH_AMOUNT"), DECIDED));
+
+        assertThat(stored.answerRetry(new RiskEvaluationCommand("TX-7", new BigDecimal("12000.0"), "AED", false, 0)))
+                .isSameAs(stored);
+    }
+
+    @Test
+    void aRetryWithAnyOtherInputIsRefusedAndKeepsTheStoredDecision() {
+        RiskAssessment stored = RiskAssessment.rehydrate(new RiskAssessmentSnapshot(
+                RiskAssessmentId.of("RISK-8"), "TX-8", new BigDecimal("12000.00"), "AED", false, 0, 85,
+                RiskDecision.BLOCK, List.of("HIGH_AMOUNT"), DECIDED));
+
+        assertThatThrownBy(() -> stored.answerRetry(
+                new RiskEvaluationCommand("TX-8", new BigDecimal("99.00"), "AED", false, 0)))
+                .isInstanceOf(TransactionAlreadyAssessedException.class)
+                .hasMessage("Transaction TX-8 was already assessed with different inputs");
+        assertThat(stored.isBlocked()).isTrue();
+        assertThat(stored.getDomainEvents()).isEmpty();
+    }
 }

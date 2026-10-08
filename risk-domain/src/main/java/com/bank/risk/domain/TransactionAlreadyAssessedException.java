@@ -1,4 +1,4 @@
-package com.bank.risk.application;
+package com.bank.risk.domain;
 
 /**
  * Thrown when a transaction id that was already assessed is sent again with

@@ -1,6 +1,6 @@
 package com.bank.risk.infrastructure.web;
 
-import com.bank.risk.application.TransactionAlreadyAssessedException;
+import com.bank.risk.domain.TransactionAlreadyAssessedException;
 import org.hibernate.exception.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

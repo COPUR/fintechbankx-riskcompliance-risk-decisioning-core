@@ -2,6 +2,7 @@ package com.bank.risk.infrastructure.web;
 
 import com.bank.risk.domain.RiskAssessment;
 import com.bank.risk.domain.RiskDecision;
+import com.bank.risk.domain.TransactionAlreadyAssessedException;
 import com.bank.risk.domain.command.RiskEvaluationCommand;
 import com.bank.risk.domain.port.in.RiskAssessmentUseCase;
 import org.junit.jupiter.api.BeforeEach;
@@ -69,7 +70,7 @@ class RiskControllerTest {
     @Test
     void reusedTransactionIdWithADifferentAmountIsAConflict() throws Exception {
         when(service.assess(any(RiskEvaluationCommand.class)))
-                .thenThrow(new com.bank.risk.application.TransactionAlreadyAssessedException("TX-3"));
+                .thenThrow(new TransactionAlreadyAssessedException("TX-3"));
 
         mockMvc.perform(post("/api/v1/risk/assess")
                         .contentType(MediaType.APPLICATION_JSON)

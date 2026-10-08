@@ -30,12 +30,9 @@ public class RiskAssessmentService implements RiskAssessmentUseCase {
     public RiskAssessment assess(RiskEvaluationCommand command) {
         Optional<RiskAssessment> existing = repository.findByTransactionId(command.transactionId());
         if (existing.isPresent()) {
-            // Retries repeating every input get the original decision and publish nothing; any
-            // other input under a reused id is a different question and is refused.
-            if (!existing.get().matches(command)) {
-                throw new TransactionAlreadyAssessedException(command.transactionId());
-            }
-            return existing.get();
+            // Retries get the original decision and publish nothing; the aggregate refuses any
+            // other input under a reused id.
+            return existing.get().answerRetry(command);
         }
 
         RiskAssessment assessment = policyService.evaluate(command);

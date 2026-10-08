@@ -126,6 +126,18 @@ public final class RiskAssessment {
                 && velocityScore == request.velocityScore();
     }
 
+    /**
+     * Answers a repeated request for this transaction: the stored decision when
+     * every input is repeated (no new event is raised), otherwise
+     * {@link TransactionAlreadyAssessedException}. A stored decision is never replaced.
+     */
+    public RiskAssessment answerRetry(RiskEvaluationCommand request) {
+        if (!matches(request)) {
+            throw new TransactionAlreadyAssessedException(request.transactionId());
+        }
+        return this;
+    }
+
     private RiskAssessedEvent assessedEvent() {
         return new RiskAssessedEvent(UUID.randomUUID(), assessedAt, id, transactionId, decision, score,
                 amount, currency, reasons, assessedAt);
