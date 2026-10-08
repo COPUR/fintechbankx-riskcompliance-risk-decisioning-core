@@ -37,12 +37,14 @@ module "service_base" {
 # --- Encryption -------------------------------------------------------------
 
 # Two keys (ADR-023). The database key encrypts Aurora storage, snapshots and
-# Performance Insights and is not tagged, so the platform External Secrets
+# Performance Insights, plus the RDS-managed master secret, which External
+# Secrets never syncs. It is not tagged, so the platform External Secrets
 # Operator role, which may decrypt only keys tagged fintechbankx.io/secrets,
-# cannot decrypt it. The secrets key protects only Secrets Manager secrets.
+# cannot decrypt it. The secrets key protects only the secrets External
+# Secrets syncs into the namespace.
 
 resource "aws_kms_key" "database" {
-  description             = "Encrypts ${local.database} storage, snapshots and Performance Insights"
+  description             = "Encrypts ${local.database} storage, snapshots, Performance Insights and the master secret"
   enable_key_rotation     = true
   deletion_window_in_days = 30
   tags                    = local.tags
@@ -115,7 +117,7 @@ resource "aws_rds_cluster" "database" {
   database_name                       = local.database
   master_username                     = "risk_admin"
   manage_master_user_password         = true
-  master_user_secret_kms_key_id       = aws_kms_key.secrets.key_id
+  master_user_secret_kms_key_id       = aws_kms_key.database.key_id
   db_subnet_group_name                = aws_db_subnet_group.database.name
   vpc_security_group_ids              = [aws_security_group.database.id]
   db_cluster_parameter_group_name     = aws_rds_cluster_parameter_group.database.name
