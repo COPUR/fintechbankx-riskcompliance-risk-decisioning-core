@@ -58,6 +58,21 @@ Bu repository, FinTechBankX DDD/EDA dönüşümünde **svc-rsk-decisioning** ser
 | Data split from the monolith | [RUNBOOK-EXTRACT-rsk-decisioning](docs/migration/RUNBOOK-EXTRACT-rsk-decisioning.md) |
 | Deployment and Well-Architected mapping | [DEPLOYMENT_AND_WELL_ARCHITECTED](docs/architecture/DEPLOYMENT_AND_WELL_ARCHITECTED.md) |
 
+## Calling the service
+
+- `transactionId` is unique across **all** callers: the first assessment of an id is the decision of record for everyone. Callers must namespace their ids, for example `PAY-<payment id>`.
+- A retry is answered with the stored decision only when it repeats every input: amount (compared by value), currency, `highRiskCountry` and `velocityScore`. Any other input under the same id is `409 TRANSACTION_ALREADY_ASSESSED`.
+- `409 DUPLICATE_REQUEST` means a concurrent first request for the same id won. Retry to get its decision.
+- Inputs are refused with `400 INVALID_REQUEST` rather than rounded or truncated:
+  - `transactionId` longer than 128 characters;
+  - currency that is not an upper-case ISO 4217 code;
+  - amount with more than 15 integer digits or more than 4 decimals;
+  - `velocityScore` outside 0..100.
+- Tokens must carry `svc-rsk-decisioning` in `aud` (`OIDC_AUDIENCE`).
+  - Bank staff need `BANKER` or `ADMIN`.
+  - Services need `SERVICE` and a client id (`azp`) listed in `SERVICE_CALLERS` (default `svc-pay-initiation-settlement`).
+  - DPoP is not required for internal client-credentials calls, which are bound by mesh mTLS (platform contract).
+
 Module layout: `risk-domain` (assessment, events, policy, ports) ← `risk-application` (use case) ← `risk-infrastructure` (JPA, transactional outbox, web, security) ← `risk-bootstrap` (Spring Boot app).
 
 ## Published events
@@ -68,7 +83,8 @@ Module layout: `risk-domain` (assessment, events, policy, ports) ← `risk-appli
 
 - Written to `sc_rsk_decisioning.outbox_event` in the same transaction as the `risk_assessment` row (`TransactionalRiskAssessmentUseCase`, `OutboxRiskEventPublisher`). If the insert loses a race on the unique `transaction_id`, the transaction rolls back and no event is left behind.
 - `OutboxRelay` publishes rows in insertion order. One replica relays at a time (Postgres advisory lock). Delivery is at least once, so consumers de-duplicate on `eventId`. Published rows are purged after `risk.outbox.retention` (7 days).
-- Runtime settings: `KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_SECURITY_PROTOCOL`, `SPRING_PROFILES_ACTIVE=msk` (Amazon MSK with IAM auth through the IRSA role), and `OUTBOX_RELAY_ENABLED` (default `true`).
+- Runtime settings: `KAFKA_BOOTSTRAP_SERVERS` and `KAFKA_SECURITY_PROTOCOL`; `SPRING_PROFILES_ACTIVE=kafka-msk` selects Amazon MSK with IAM auth through the IRSA role, and `kafka-strimzi` selects mutual TLS with PEM from `KAFKA_TLS_CERT`/`KAFKA_TLS_KEY`/`KAFKA_TLS_CA`; `OUTBOX_RELAY_ENABLED` defaults to `true`. The producer follows the platform client guide: client id `svc-rsk-decisioning`, `acks=all`, idempotent, lz4, `linger.ms=5`, and no topic auto-creation.
+- Record headers: `eventType`, `eventId`, `correlationId`, `x-fapi-interaction-id`, and a W3C `traceparent` when the request that raised the event was traced.
 - Backlog metric: `outbox_pending_events{service="svc-rsk-decisioning"}`.
 - Status: Proposed. The AsyncAPI catalog mirrors this contract, and the topics are not yet created on the platform cluster.
 

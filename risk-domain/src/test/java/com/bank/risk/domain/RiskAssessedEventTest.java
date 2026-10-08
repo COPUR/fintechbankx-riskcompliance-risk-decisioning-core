@@ -1,5 +1,6 @@
 package com.bank.risk.domain;
 
+import com.bank.risk.domain.command.RiskEvaluationCommand;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -17,7 +18,7 @@ class RiskAssessedEventTest {
 
     @Test
     void aNewAssessmentRaisesExactlyOneAssessedEventWithItsFacts() {
-        RiskAssessment assessment = RiskAssessment.create("PAY-77", new BigDecimal("60000.00"), "AED", 100,
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("PAY-77", new BigDecimal("60000.00"), "AED", false, 0), 100,
                 RiskDecision.BLOCK, List.of("HIGH_AMOUNT", "VERY_HIGH_AMOUNT", "HIGH_RISK_COUNTRY", "HIGH_VELOCITY"));
 
         assertThat(assessment.getDomainEvents()).hasSize(1);
@@ -37,7 +38,7 @@ class RiskAssessedEventTest {
     @Test
     void aRehydratedAssessmentRaisesNothingBecauseTheFactWasAlreadyPublished() {
         RiskAssessment stored = RiskAssessment.rehydrate(new RiskAssessmentSnapshot(
-                RiskAssessmentId.of("RISK-STORED"), "PAY-78", new BigDecimal("100.00"), "AED", 0,
+                RiskAssessmentId.of("RISK-STORED"), "PAY-78", new BigDecimal("100.00"), "AED", false, 0, 0,
                 RiskDecision.ALLOW, List.of(), DECIDED));
 
         assertThat(stored.getDomainEvents()).isEmpty();
@@ -45,7 +46,7 @@ class RiskAssessedEventTest {
 
     @Test
     void clearingTheEventsAfterPublishingEmptiesTheList() {
-        RiskAssessment assessment = RiskAssessment.create("PAY-79", new BigDecimal("45.10"), "AED", 15,
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("PAY-79", new BigDecimal("45.10"), "AED", false, 0), 15,
                 RiskDecision.ALLOW, List.of("MEDIUM_VELOCITY"));
 
         assessment.clearDomainEvents();
@@ -55,7 +56,7 @@ class RiskAssessedEventTest {
 
     @Test
     void theEventListCannotBeChangedFromOutside() {
-        RiskAssessment assessment = RiskAssessment.create("PAY-80", new BigDecimal("1.00"), "AED", 0,
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("PAY-80", new BigDecimal("1.00"), "AED", false, 0), 0,
                 RiskDecision.ALLOW, List.of());
 
         assertThatThrownBy(() -> assessment.getDomainEvents().clear())

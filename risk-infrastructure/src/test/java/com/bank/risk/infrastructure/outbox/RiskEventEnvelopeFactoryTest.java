@@ -1,5 +1,6 @@
 package com.bank.risk.infrastructure.outbox;
 
+import com.bank.risk.domain.command.RiskEvaluationCommand;
 import com.bank.risk.domain.RiskAssessedEvent;
 import com.bank.risk.domain.RiskAssessment;
 import com.bank.risk.domain.RiskDecision;
@@ -16,11 +17,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class RiskEventEnvelopeFactoryTest {
 
+    private static final String TRACEPARENT = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+
     private final ObjectMapper json = new ObjectMapper();
     private final RiskEventEnvelopeFactory factory = new RiskEventEnvelopeFactory(json);
 
     private static RiskAssessment blocked() {
-        return RiskAssessment.create("PAY-ENV-1", new BigDecimal("60000.5"), "AED", 100, RiskDecision.BLOCK,
+        return RiskAssessment.create(new RiskEvaluationCommand("PAY-ENV-1", new BigDecimal("60000.5"), "AED", false, 0), 100, RiskDecision.BLOCK,
             List.of("HIGH_AMOUNT", "VERY_HIGH_AMOUNT", "HIGH_RISK_COUNTRY", "HIGH_VELOCITY"));
     }
 
@@ -29,7 +32,7 @@ class RiskEventEnvelopeFactoryTest {
         RiskAssessment assessment = blocked();
         RiskAssessedEvent event = (RiskAssessedEvent) assessment.getDomainEvents().getFirst();
 
-        OutboxEventJpaEntity row = factory.toOutboxRow(event, "corr-env-1");
+        OutboxEventJpaEntity row = factory.toOutboxRow(event, "corr-env-1", TRACEPARENT);
         JsonNode envelope = json.readTree(row.getPayload());
 
         assertThat(row.getEventId()).isEqualTo(event.eventId());
@@ -40,6 +43,7 @@ class RiskEventEnvelopeFactoryTest {
         assertThat(row.getAggregateVersion()).isZero();
         assertThat(row.getCorrelationId()).isEqualTo("corr-env-1");
         assertThat(row.getOccurredAt()).isEqualTo(assessment.getAssessedAt());
+        assertThat(row.getTraceparent()).isEqualTo(TRACEPARENT);
 
         assertThat(envelope.fieldNames()).toIterable().containsExactly("eventId", "eventType", "occurredAt",
             "aggregateId", "aggregateVersion", "correlationId", "causationId", "producer", "data");
@@ -55,7 +59,7 @@ class RiskEventEnvelopeFactoryTest {
     void dataCarriesTheDecisionFactsWithMoneyAsADecimalString() throws Exception {
         RiskAssessment assessment = blocked();
 
-        JsonNode data = json.readTree(factory.toOutboxRow(assessment.getDomainEvents().getFirst(), "c").getPayload())
+        JsonNode data = json.readTree(factory.toOutboxRow(assessment.getDomainEvents().getFirst(), "c", null).getPayload())
             .get("data");
 
         assertThat(data.fieldNames()).toIterable().containsExactly("assessmentId", "transactionId", "decision",
@@ -74,10 +78,10 @@ class RiskEventEnvelopeFactoryTest {
 
     @Test
     void largeAmountsAreNeverWrittenInScientificNotation() throws Exception {
-        RiskAssessment assessment = RiskAssessment.create("PAY-ENV-2", new BigDecimal("1E+6"), "AED", 50,
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("PAY-ENV-2", new BigDecimal("1E+6"), "AED", false, 0), 50,
             RiskDecision.REVIEW, List.of("HIGH_AMOUNT", "VERY_HIGH_AMOUNT"));
 
-        JsonNode data = json.readTree(factory.toOutboxRow(assessment.getDomainEvents().getFirst(), "c").getPayload())
+        JsonNode data = json.readTree(factory.toOutboxRow(assessment.getDomainEvents().getFirst(), "c", null).getPayload())
             .get("data");
 
         assertThat(data.at("/amount/amount").asText()).isEqualTo("1000000");
@@ -94,7 +98,7 @@ class RiskEventEnvelopeFactoryTest {
         };
         RiskEventEnvelopeFactory failing = new RiskEventEnvelopeFactory(broken);
 
-        assertThatThrownBy(() -> failing.toOutboxRow(blocked().getDomainEvents().getFirst(), "c"))
+        assertThatThrownBy(() -> failing.toOutboxRow(blocked().getDomainEvents().getFirst(), "c", null))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("Cannot serialise");
     }

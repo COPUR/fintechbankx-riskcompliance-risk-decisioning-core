@@ -1,5 +1,6 @@
 package com.bank.risk.application.dto;
 
+import com.bank.risk.domain.command.RiskEvaluationCommand;
 import com.bank.risk.domain.RiskAssessment;
 import com.bank.risk.domain.RiskDecision;
 import org.junit.jupiter.api.Test;
@@ -13,10 +14,7 @@ class RiskAssessmentResponseTest {
 
     @Test
     void shouldMapFromDomain() {
-        RiskAssessment assessment = RiskAssessment.create(
-                "TX-1",
-                new BigDecimal("50"),
-                "AED",
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("50"), "AED", false, 0),
                 25,
                 RiskDecision.ALLOW,
                 List.of("COMPLIANT")

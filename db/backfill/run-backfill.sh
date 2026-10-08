@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Copies credit risk assessments from the monolith database into
-# svc-rsk-decisioning's own database and reconciles the two. Re-runnable.
+# svc-rsk-decisioning's own database and reconciles the two, row by row.
+# Re-runnable until cutover: rows changed in the monolith since the last run
+# (for example approved) are updated.
 #
 #   db/backfill/run-backfill.sh <monolith-conninfo> <risk-service-conninfo>
 #
@@ -49,7 +51,7 @@ if [ "$source_figures" != "$target_figures" ]; then
   exit 1
 fi
 if [ -n "$invariant_breaks" ]; then
-  echo "RECONCILIATION FAILED: assessments whose expected loss does not match EAD x PD x LGD:" >&2
+  echo "RECONCILIATION FAILED: rows that break an invariant or differ from the monolith (kind|assessment_id):" >&2
   echo "$invariant_breaks" >&2
   exit 1
 fi

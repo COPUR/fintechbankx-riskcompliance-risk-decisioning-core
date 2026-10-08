@@ -34,8 +34,9 @@ public class OutboxRiskEventPublisher implements RiskEventPublisher {
             return;
         }
         String correlationId = currentCorrelationId();
+        String traceparent = TraceContext.currentTraceparent();
         outbox.saveAll(events.stream()
-            .map(event -> envelopes.toOutboxRow(event, correlationId))
+            .map(event -> envelopes.toOutboxRow(event, correlationId, traceparent))
             .toList());
     }
 

@@ -30,7 +30,10 @@ public class RiskEventEnvelopeFactory {
         this.objectMapper = objectMapper;
     }
 
-    public OutboxEventJpaEntity toOutboxRow(RiskDomainEvent event, String correlationId) {
+    /**
+     * @param traceparent W3C trace context to forward as a record header, or null
+     */
+    public OutboxEventJpaEntity toOutboxRow(RiskDomainEvent event, String correlationId, String traceparent) {
         PublicEvent mapped = map(event);
 
         Map<String, Object> envelope = new LinkedHashMap<>();
@@ -45,7 +48,7 @@ public class RiskEventEnvelopeFactory {
         envelope.put("data", mapped.data());
 
         return new OutboxEventJpaEntity(event.eventId(), AGGREGATE_TYPE, mapped.aggregateId(), AGGREGATE_VERSION,
-            mapped.eventType(), mapped.topic(), toJson(envelope), correlationId, event.occurredAt());
+            mapped.eventType(), mapped.topic(), toJson(envelope), correlationId, event.occurredAt(), traceparent);
     }
 
     static PublicEvent map(RiskDomainEvent event) {

@@ -47,6 +47,10 @@ public class OutboxEventJpaEntity {
     @Column(name = "occurred_at", nullable = false, updatable = false)
     private Instant occurredAt;
 
+    /** W3C traceparent of the request that raised the event; null when none was active. */
+    @Column(name = "traceparent", length = 55, updatable = false)
+    private String traceparent;
+
     @Column(name = "published_at")
     private Instant publishedAt;
 
@@ -61,7 +65,7 @@ public class OutboxEventJpaEntity {
 
     public OutboxEventJpaEntity(UUID eventId, String aggregateType, String aggregateId, long aggregateVersion,
                                 String eventType, String topic, String payload, String correlationId,
-                                Instant occurredAt) {
+                                Instant occurredAt, String traceparent) {
         this.eventId = eventId;
         this.aggregateType = aggregateType;
         this.aggregateId = aggregateId;
@@ -71,6 +75,7 @@ public class OutboxEventJpaEntity {
         this.payload = payload;
         this.correlationId = correlationId;
         this.occurredAt = occurredAt;
+        this.traceparent = traceparent;
     }
 
     public UUID getEventId() { return eventId; }
@@ -82,6 +87,7 @@ public class OutboxEventJpaEntity {
     public String getPayload() { return payload; }
     public String getCorrelationId() { return correlationId; }
     public Instant getOccurredAt() { return occurredAt; }
+    public String getTraceparent() { return traceparent; }
     public Instant getPublishedAt() { return publishedAt; }
     public int getAttempts() { return attempts; }
     public String getLastError() { return lastError; }

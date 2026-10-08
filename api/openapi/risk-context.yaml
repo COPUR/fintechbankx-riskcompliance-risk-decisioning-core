@@ -11,9 +11,14 @@ paths:
       summary: Assess transaction risk
       operationId: assessRisk
       description: |-
-        Decides once per transactionId. A retry with the same amount and
-        currency returns the stored decision; the same transactionId with a
-        different amount or currency is a 409.
+        Decides once per transactionId. transactionId is unique across all
+        callers of this service, so callers must namespace their ids (for
+        example PAY-<payment id>). A retry that repeats every input (amount by
+        value, currency, highRiskCountry, velocityScore) returns the stored
+        decision; the same transactionId with any different input is a 409
+        TRANSACTION_ALREADY_ASSESSED. A 409 DUPLICATE_REQUEST means a
+        concurrent first request for the same transactionId won; retry to get
+        its decision.
       security:
         - bearerAuth: []
           dpopAuth: []
@@ -53,7 +58,16 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
-          description: Transaction already assessed with a different amount or currency
+          description: |-
+            TRANSACTION_ALREADY_ASSESSED: the transactionId was already assessed
+            with different inputs. DUPLICATE_REQUEST: a concurrent request for
+            the same transactionId won; retrying returns its decision.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error (not retryable as a duplicate)
           content:
             application/json:
               schema:
@@ -138,13 +152,24 @@ components:
       properties:
         transactionId:
           type: string
+          description: |-
+            Caller's id of the transaction, unique across all callers (namespace
+            it, for example PAY-<payment id>). At most 128 characters.
+          maxLength: 128
         amount:
           type: number
           format: double
+          description: |-
+            Positive, at most 15 integer digits and 4 decimals. More decimals are
+            refused with a 400, never rounded, so a retry matches exactly.
+          minimum: 0
+          exclusiveMinimum: true
         currency:
           type: string
+          description: Upper-case ISO 4217 code, for example AED.
         highRiskCountry:
           type: boolean
+          default: false
         velocityScore:
           type: integer
           minimum: 0

@@ -1,5 +1,6 @@
 package com.bank.risk.infrastructure.outbox;
 
+import com.bank.risk.domain.command.RiskEvaluationCommand;
 import com.bank.risk.domain.RiskAssessment;
 import com.bank.risk.domain.RiskDecision;
 import com.bank.risk.infrastructure.web.CorrelationIdFilter;
@@ -32,7 +33,7 @@ class OutboxRiskEventPublisherTest {
     }
 
     private static RiskAssessment assessment(String transactionId) {
-        return RiskAssessment.create(transactionId, new BigDecimal("12000.00"), "AED", 60, RiskDecision.REVIEW,
+        return RiskAssessment.create(new RiskEvaluationCommand(transactionId, new BigDecimal("12000.00"), "AED", false, 0), 60, RiskDecision.REVIEW,
             List.of("HIGH_AMOUNT", "MEDIUM_VELOCITY"));
     }
 
@@ -60,6 +61,30 @@ class OutboxRiskEventPublisherTest {
         ArgumentCaptor<List<OutboxEventJpaEntity>> rows = ArgumentCaptor.forClass(List.class);
         verify(outbox).saveAll(rows.capture());
         assertThat(rows.getValue().getFirst().getCorrelationId()).matches("[0-9a-f-]{36}");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void theActiveTraceIsStoredForTheRelay() {
+        MDC.put("traceId", "4bf92f3577b34da6a3ce929d0e0e4736");
+        MDC.put("spanId", "00f067aa0ba902b7");
+
+        publisher.publish(assessment("PAY-PUB-3").getDomainEvents());
+
+        ArgumentCaptor<List<OutboxEventJpaEntity>> rows = ArgumentCaptor.forClass(List.class);
+        verify(outbox).saveAll(rows.capture());
+        assertThat(rows.getValue().getFirst().getTraceparent())
+            .isEqualTo("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void withoutATraceNoTraceparentIsStored() {
+        publisher.publish(assessment("PAY-PUB-4").getDomainEvents());
+
+        ArgumentCaptor<List<OutboxEventJpaEntity>> rows = ArgumentCaptor.forClass(List.class);
+        verify(outbox).saveAll(rows.capture());
+        assertThat(rows.getValue().getFirst().getTraceparent()).isNull();
     }
 
     @Test

@@ -10,7 +10,7 @@ Extraction of risk decisioning from `enterprise-loan-management-system` into
 | Slice | Transaction risk assessment (score, ALLOW / REVIEW / BLOCK, reasons) and the history of credit risk assessments |
 | Owned data | `db_rsk_decisioning_<env>`, schema `sc_rsk_decisioning`: `risk_assessment`, `legacy_credit_risk_assessment`, `outbox_event` |
 | Events | `evt.rsk.risk.assessed.v1` (`Risk.RiskAssessment.Assessed.v1`) through a transactional outbox; contract `api/asyncapi/svc-rsk-decisioning.yaml` (Proposed). Callers still use the decision synchronously. |
-| Called by | payment services: `POST /api/v1/risk/assess`, `GET /api/v1/risk/assessments/{transactionId}` |
+| Called by | `svc-pay-initiation-settlement` (namespace `payments`, client on `SERVICE_CALLERS`): `POST /api/v1/risk/assess`, `GET /api/v1/risk/assessments/{transactionId}`; bank staff read assessments |
 
 ## 1. Data ownership split
 
@@ -31,7 +31,11 @@ Flyway migrations: `risk-infrastructure/src/main/resources/db/migration/V1__crea
 2. Stages them in `backfill_stage` and copies them into `legacy_credit_risk_assessment` (`02_transform_into_risk_service.sql`). Every column is kept; `customer_id` becomes text, the id the customer service keeps.
 3. Compares row counts, exposure and expected-loss totals, and checks each row's expected loss against EAD × PD × LGD (`03_reconcile.sql`). Any difference fails the run.
 
-The backfill is independent of the other contexts' backfills and idempotent (`ON CONFLICT DO NOTHING` on `assessment_id`). `scripts/migration/verify-backfill.sh` rehearses it on a scratch PostgreSQL and runs in CI (`deploy/data-split-rehearsal`).
+The backfill is independent of the other contexts' backfills and can be re-run until cutover:
+- A row already copied is updated when anything changed in the monolith since the last run, for example an assessment approved or overridden later (`status`, `approved_by`, `approval_date`, `override_*`, review dates, `updated_at`, `version`). Unchanged rows are not touched.
+- The service never writes `legacy_credit_risk_assessment`, so the monolith's version always wins.
+- `03_reconcile.sql` compares totals, the expected-loss invariant, and every column of every row against the snapshot (`IS DISTINCT FROM`). Any `MISSING` or `DIFF` row fails the run.
+- `scripts/migration/verify-backfill.sh` rehearses two runs, an approval in the monolith with a third run, and a drifted row that reconciliation must catch, on a scratch PostgreSQL. It runs in CI (`deploy/data-split-rehearsal`).
 
 ## 3. Cutover plan
 
@@ -47,7 +51,7 @@ The backfill is independent of the other contexts' backfills and idempotent (`ON
 
 - [x] Service builds and tests standalone (`ci/build`, `ci/test`, including PostgreSQL integration tests)
 - [x] Own schema and migrations; Hibernate validates the entity at startup
-- [x] One decision per transaction: retries return the stored decision, a reused id with another amount is a 409
+- [x] One decision per transaction: retries that repeat every input return the stored decision; a reused id with any other input (amount, currency, high-risk flag, velocity) is a 409; a lost concurrent insert is a retryable 409 with no event left behind
 - [x] Credit risk history backfill rehearsed with reconciliation in CI
 - [x] Container image, Helm chart, Terraform validate in CI (`Deployability` workflow)
 - [ ] Payment services call this API (follow-up in the payments repositories)

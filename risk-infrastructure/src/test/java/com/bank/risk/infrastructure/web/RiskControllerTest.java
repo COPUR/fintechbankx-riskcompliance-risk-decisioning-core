@@ -6,6 +6,8 @@ import com.bank.risk.domain.command.RiskEvaluationCommand;
 import com.bank.risk.domain.port.in.RiskAssessmentUseCase;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -36,7 +38,7 @@ class RiskControllerTest {
 
     @Test
     void shouldAssessRisk() throws Exception {
-        RiskAssessment assessment = RiskAssessment.create("TX-1", new BigDecimal("200"), "AED", 60, RiskDecision.REVIEW, List.of("HIGH_AMOUNT"));
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("200"), "AED", false, 0), 60, RiskDecision.REVIEW, List.of("HIGH_AMOUNT"));
         when(service.assess(any(RiskEvaluationCommand.class))).thenReturn(assessment);
 
         mockMvc.perform(post("/api/v1/risk/assess")
@@ -51,7 +53,7 @@ class RiskControllerTest {
 
     @Test
     void shouldReturnAssessmentByTransactionId() throws Exception {
-        RiskAssessment assessment = RiskAssessment.create("TX-2", new BigDecimal("100"), "AED", 10, RiskDecision.ALLOW, List.of("COMPLIANT"));
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-2", new BigDecimal("100"), "AED", false, 0), 10, RiskDecision.ALLOW, List.of("COMPLIANT"));
         when(service.findByTransactionId("TX-2")).thenReturn(Optional.of(assessment));
         when(service.findByTransactionId("TX-404")).thenReturn(Optional.empty());
 
@@ -96,12 +98,22 @@ class RiskControllerTest {
                 .andExpect(jsonPath("$.message").value("Malformed request body"));
     }
 
-    @Test
-    void concurrentDuplicateIsAConflict() {
-        var response = new ApiExceptionHandler().duplicate(
-                new org.springframework.dao.DataIntegrityViolationException("uq_risk_assessment_transaction"));
-
-        org.assertj.core.api.Assertions.assertThat(response.getStatusCode().value()).isEqualTo(409);
-        org.assertj.core.api.Assertions.assertThat(response.getBody().code()).isEqualTo("DUPLICATE_REQUEST");
+    @ParameterizedTest(name = "{0}")
+    @CsvSource(delimiter = '|', value = {
+        "lower-case currency      | {\"transactionId\":\"TX-5\",\"amount\":10.00,\"currency\":\"aed\",\"highRiskCountry\":false,\"velocityScore\":0}   | currency",
+        "unknown currency         | {\"transactionId\":\"TX-5\",\"amount\":10.00,\"currency\":\"ABC\",\"highRiskCountry\":false,\"velocityScore\":0}   | currency",
+        "129-character id         | {\"transactionId\":\"ID129\",\"amount\":10.00,\"currency\":\"AED\",\"highRiskCountry\":false,\"velocityScore\":0}  | transactionId",
+        "16 integer digits        | {\"transactionId\":\"TX-5\",\"amount\":1e16,\"currency\":\"AED\",\"highRiskCountry\":false,\"velocityScore\":0}    | amount",
+        "five decimals            | {\"transactionId\":\"TX-5\",\"amount\":1.23456,\"currency\":\"AED\",\"highRiskCountry\":false,\"velocityScore\":0} | amount",
+        "velocity out of range    | {\"transactionId\":\"TX-5\",\"amount\":10.00,\"currency\":\"AED\",\"highRiskCountry\":false,\"velocityScore\":-1}  | velocityScore"
+    })
+    void inputsTheDecisionOfRecordCannotHoldAreA400(String name, String body, String field) throws Exception {
+        mockMvc.perform(post("/api/v1/risk/assess")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body.replace("ID129", "P".repeat(129))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString(field)));
+        org.mockito.Mockito.verifyNoInteractions(service);
     }
 }

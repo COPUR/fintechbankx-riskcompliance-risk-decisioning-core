@@ -1,5 +1,6 @@
 package com.bank.risk.infrastructure.persistence;
 
+import com.bank.risk.domain.command.RiskEvaluationCommand;
 import com.bank.risk.domain.RiskAssessment;
 import com.bank.risk.domain.RiskDecision;
 import org.junit.jupiter.api.Test;
@@ -13,7 +14,7 @@ class RiskAssessmentPersistenceMapperTest {
 
     @Test
     void roundTripKeepsTheDecisionOfRecord() {
-        RiskAssessment decided = RiskAssessment.create("TX-MAP-1", new BigDecimal("60000.00"), "AED", 85,
+        RiskAssessment decided = RiskAssessment.create(new RiskEvaluationCommand("TX-MAP-1", new BigDecimal("60000.00"), "AED", false, 0), 85,
                 RiskDecision.BLOCK, List.of("HIGH_AMOUNT", "VERY_HIGH_AMOUNT", "HIGH_VELOCITY"));
 
         RiskAssessmentJpaEntity row = RiskAssessmentPersistenceMapper.toEntity(decided);

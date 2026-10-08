@@ -20,11 +20,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -33,12 +33,14 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.sql.DataSource;
+import java.nio.charset.StandardCharsets;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.Statement;
@@ -94,7 +96,6 @@ class RiskOutboxIT {
     @Autowired JdbcTemplate jdbc;
     @Autowired DataSource dataSource;
     @Autowired ObjectMapper json;
-    @Autowired RiskAssessmentUseCase useCase;
     @Autowired RiskAssessmentRepository repository;
     @Autowired RiskEventPublisher publisher;
     @Autowired SpringDataOutboxRepository outbox;
@@ -125,6 +126,8 @@ class RiskOutboxIT {
         assertThat(row.get("aggregate_version")).isEqualTo(0L);
         assertThat(row.get("correlation_id")).isEqualTo("it-outbox-1");
         assertThat(row.get("published_at")).isNull();
+        assertThat(jdbc.queryForObject("select traceparent from " + OUTBOX, String.class))
+            .as("no tracing bridge is active in this test, so no trace context is invented").isNull();
 
         JsonNode envelope = json.readTree(jdbc.queryForObject("select payload::text from " + OUTBOX, String.class));
         assertThat(envelope.get("producer").asText()).isEqualTo("svc-rsk-decisioning");
@@ -140,33 +143,32 @@ class RiskOutboxIT {
     }
 
     @Test
-    void anAssessmentThatLosesTheInsertRaceLeavesNoOutboxRow() throws Exception {
-        RiskEvaluationCommand command = new RiskEvaluationCommand("PAY-RACE-1", new BigDecimal("100.00"), "AED", false, 0);
-        Future<Throwable> loser;
+    void anAssessmentThatLosesTheInsertRaceIsARetryableConflictAndLeavesNoOutboxRow() throws Exception {
+        Future<MvcResult> loser;
         try (Connection winner = dataSource.getConnection()) {
             winner.setAutoCommit(false);
             try (Statement insert = winner.createStatement()) {
-                insert.executeUpdate("insert into " + ASSESSMENTS + " (assessment_id, transaction_id, amount, currency, score, "
-                    + "decision, reasons, assessed_at) values ('RISK-RACE-WINNER', 'PAY-RACE-1', 100.00, 'AED', 0, 'ALLOW', "
-                    + "'[]'::jsonb, now())");
+                insert.executeUpdate("insert into " + ASSESSMENTS + " (assessment_id, transaction_id, amount, currency, "
+                    + "high_risk_country, velocity_score, score, decision, reasons, assessed_at) values ('RISK-RACE-WINNER', "
+                    + "'PAY-RACE-1', 100.00, 'AED', true, 80, 70, 'REVIEW', '[\"HIGH_RISK_COUNTRY\",\"HIGH_VELOCITY\"]'::jsonb, now())");
             }
-            // The loser does not see the uncommitted winner, evaluates, and blocks on the unique index.
-            loser = LOSER.submit(() -> {
-                try {
-                    useCase.assess(command);
-                    return null;
-                } catch (Throwable failure) {
-                    return failure;
-                }
-            });
+            // The loser cannot see the uncommitted winner, evaluates, and blocks on the unique index.
+            loser = LOSER.submit(() -> assess("PAY-RACE-1", "100.00").andReturn());
             awaitLockWait();
             winner.commit();
         }
 
-        assertThat(loser.get(15, TimeUnit.SECONDS)).isInstanceOf(DataIntegrityViolationException.class);
+        MvcResult lost = loser.get(15, TimeUnit.SECONDS);
+        assertThat(lost.getResponse().getStatus()).isEqualTo(409);
+        assertThat(json.readTree(lost.getResponse().getContentAsString()).get("code").asText()).isEqualTo("DUPLICATE_REQUEST");
         assertThat(count(OUTBOX)).isZero();
         assertThat(jdbc.queryForList("select assessment_id from " + ASSESSMENTS, String.class))
             .containsExactly("RISK-RACE-WINNER");
+
+        // The retry the 409 invites returns the winner's decision.
+        assess("PAY-RACE-1", "100.00").andExpect(status().isCreated())
+            .andExpect(jsonPath("$.assessmentId").value("RISK-RACE-WINNER"));
+        assertThat(count(OUTBOX)).isZero();
     }
 
     @Test
@@ -189,7 +191,7 @@ class RiskOutboxIT {
 
     @Test
     void theOutboxRefusesToWriteOutsideATransaction() {
-        RiskAssessment assessment = RiskAssessment.create("PAY-NO-TX", new BigDecimal("1.00"), "AED", 0,
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("PAY-NO-TX", new BigDecimal("1.00"), "AED", false, 0), 0,
             RiskDecision.ALLOW, List.of());
 
         assertThatThrownBy(() -> publisher.publish(assessment.getDomainEvents()))
@@ -218,6 +220,32 @@ class RiskOutboxIT {
         assertThat(count(OUTBOX)).isEqualTo(1);
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void theRequestTraceIsStoredWithTheEventAndSentAsTraceparent() {
+        String traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+        RiskAssessment assessment = RiskAssessment.create(
+            new RiskEvaluationCommand("PAY-TRACE-1", new BigDecimal("20.00"), "AED", false, 0), 0, RiskDecision.ALLOW, List.of());
+        MDC.put("traceId", "4bf92f3577b34da6a3ce929d0e0e4736");
+        MDC.put("spanId", "00f067aa0ba902b7");
+        try {
+            new TransactionTemplate(transactionManager).executeWithoutResult(status ->
+                publisher.publish(assessment.getDomainEvents()));
+        } finally {
+            MDC.clear();
+        }
+        assertThat(jdbc.queryForObject("select traceparent from " + OUTBOX, String.class)).isEqualTo(traceparent);
+
+        when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
+        new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), Clock.systemUTC(), 10,
+            Duration.ofSeconds(1), Duration.ofDays(7)).relayOnce();
+
+        ArgumentCaptor<ProducerRecord<String, String>> records = ArgumentCaptor.forClass(ProducerRecord.class);
+        Mockito.verify(kafka).send(records.capture());
+        assertThat(new String(records.getValue().headers().lastHeader("traceparent").value(), StandardCharsets.UTF_8))
+            .isEqualTo(traceparent);
+    }
+
     private void awaitLockWait() throws InterruptedException {
         for (int i = 0; i < 150; i++) {
             Integer waiting = jdbc.queryForObject("select count(*) from pg_stat_activity "
@@ -237,7 +265,7 @@ class RiskOutboxIT {
     private ResultActions assess(String transactionId, String amount) throws Exception {
         return mvc.perform(post("/api/v1/risk/assess")
             .header("x-fapi-interaction-id", "it-outbox-1")
-            .with(jwt().jwt(j -> j.subject("svc-pay-initiation-settlement")).authorities(new SimpleGrantedAuthority("ROLE_SERVICE")))
+            .with(jwt().jwt(j -> j.subject("service-account-payments").claim("azp", "svc-pay-initiation-settlement")).authorities(new SimpleGrantedAuthority("ROLE_SERVICE")))
             .contentType(MediaType.APPLICATION_JSON)
             .content("""
                 {"transactionId": "%s", "amount": %s, "currency": "AED", "highRiskCountry": true, "velocityScore": 80}

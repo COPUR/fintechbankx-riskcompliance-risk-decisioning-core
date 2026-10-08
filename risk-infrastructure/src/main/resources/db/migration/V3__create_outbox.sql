@@ -13,13 +13,16 @@ CREATE TABLE outbox_event (
     payload           JSONB         NOT NULL,
     correlation_id    VARCHAR(128)  NOT NULL,
     occurred_at       TIMESTAMPTZ   NOT NULL,
+    traceparent       VARCHAR(55),
     created_at        TIMESTAMPTZ   NOT NULL DEFAULT now(),
     published_at      TIMESTAMPTZ,
     attempts          INTEGER       NOT NULL DEFAULT 0,
     last_error        VARCHAR(512),
 
     CONSTRAINT uq_outbox_created_seq UNIQUE (created_seq),
-    CONSTRAINT ck_outbox_topic_namespace CHECK (topic LIKE 'evt.rsk.risk.%')
+    CONSTRAINT ck_outbox_topic_namespace CHECK (topic LIKE 'evt.rsk.risk.%'),
+    -- W3C traceparent of the request that raised the event, sent as a record header.
+    CONSTRAINT ck_outbox_traceparent CHECK (traceparent IS NULL OR traceparent ~ '^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$')
 );
 
 -- The relay reads unpublished rows in insertion order.

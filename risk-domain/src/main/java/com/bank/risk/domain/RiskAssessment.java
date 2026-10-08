@@ -1,5 +1,7 @@
 package com.bank.risk.domain;
 
+import com.bank.risk.domain.command.RiskEvaluationCommand;
+
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -13,6 +15,8 @@ public final class RiskAssessment {
     private final String transactionId;
     private final BigDecimal amount;
     private final String currency;
+    private final boolean highRiskCountry;
+    private final int velocityScore;
     private final int score;
     private final RiskDecision decision;
     private final List<String> reasons;
@@ -24,6 +28,8 @@ public final class RiskAssessment {
             String transactionId,
             BigDecimal amount,
             String currency,
+            boolean highRiskCountry,
+            int velocityScore,
             int score,
             RiskDecision decision,
             List<String> reasons,
@@ -39,31 +45,41 @@ public final class RiskAssessment {
         if (currency == null || currency.isBlank()) {
             throw new IllegalArgumentException("currency is required");
         }
+        if (velocityScore < 0 || velocityScore > 100) {
+            throw new IllegalArgumentException("velocityScore must be between 0 and 100");
+        }
         if (score < 0 || score > 100) {
             throw new IllegalArgumentException("score must be between 0 and 100");
         }
         this.transactionId = transactionId;
         this.amount = amount;
         this.currency = currency;
+        this.highRiskCountry = highRiskCountry;
+        this.velocityScore = velocityScore;
         this.score = score;
         this.decision = Objects.requireNonNull(decision, "decision is required");
         this.reasons = List.copyOf(Objects.requireNonNull(reasons, "reasons are required"));
         this.assessedAt = Objects.requireNonNull(assessedAt, "assessedAt is required");
     }
 
+    /**
+     * Records the decision the policy made for these inputs. The inputs are
+     * kept with the decision so a retry can be checked against all of them.
+     */
     public static RiskAssessment create(
-            String transactionId,
-            BigDecimal amount,
-            String currency,
+            RiskEvaluationCommand inputs,
             int score,
             RiskDecision decision,
             List<String> reasons
     ) {
+        Objects.requireNonNull(inputs, "inputs are required");
         RiskAssessment assessment = new RiskAssessment(
                 RiskAssessmentId.generate(),
-                transactionId,
-                amount,
-                currency,
+                inputs.transactionId(),
+                inputs.amount(),
+                inputs.currency(),
+                inputs.highRiskCountry(),
+                inputs.velocityScore(),
                 score,
                 decision,
                 reasons,
@@ -87,6 +103,8 @@ public final class RiskAssessment {
                 snapshot.transactionId(),
                 snapshot.amount(),
                 snapshot.currency(),
+                snapshot.highRiskCountry(),
+                snapshot.velocityScore(),
                 snapshot.score(),
                 snapshot.decision(),
                 snapshot.reasons(),
@@ -95,11 +113,17 @@ public final class RiskAssessment {
     }
 
     /**
-     * True when a repeated request for this transaction describes the same
-     * transaction, so the stored decision can be returned for it.
+     * True when a repeated request repeats every input of this decision
+     * (amount compared by value, so 100.0 equals 100.00), so the stored
+     * decision can be returned for it. Any other difference is a different
+     * question under a reused transaction id.
      */
-    public boolean matches(String otherCurrency, BigDecimal otherAmount) {
-        return currency.equals(otherCurrency) && amount.compareTo(otherAmount) == 0;
+    public boolean matches(RiskEvaluationCommand request) {
+        return transactionId.equals(request.transactionId())
+                && currency.equals(request.currency())
+                && amount.compareTo(request.amount()) == 0
+                && highRiskCountry == request.highRiskCountry()
+                && velocityScore == request.velocityScore();
     }
 
     private RiskAssessedEvent assessedEvent() {
@@ -130,6 +154,14 @@ public final class RiskAssessment {
 
     public String getCurrency() {
         return currency;
+    }
+
+    public boolean isHighRiskCountry() {
+        return highRiskCountry;
+    }
+
+    public int getVelocityScore() {
+        return velocityScore;
     }
 
     public int getScore() {

@@ -50,13 +50,6 @@ public class RiskPolicyService {
             decision = RiskDecision.ALLOW;
         }
 
-        return RiskAssessment.create(
-                command.transactionId(),
-                command.amount(),
-                command.currency(),
-                score,
-                decision,
-                reasons
-        );
+        return RiskAssessment.create(command, score, decision, reasons);
     }
 }

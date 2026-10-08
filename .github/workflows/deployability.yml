@@ -47,6 +47,7 @@ jobs:
           helm lint "$chart" $args
           helm template ci "$chart" $args > /dev/null
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args > /dev/null
+          helm template ci "$chart" $args | grep -q "kind: PeerAuthentication"
 
   terraform:
     name: deploy/terraform

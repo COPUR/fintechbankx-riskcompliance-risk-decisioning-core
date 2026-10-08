@@ -26,7 +26,7 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
     implementation 'org.springframework.kafka:spring-kafka'
     runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
-    // Amazon MSK IAM client authentication, used by the "msk" profile (application.yml)
+    // Amazon MSK IAM client authentication, used by the kafka-msk profile (application.yml)
     runtimeOnly 'software.amazon.msk:aws-msk-iam-auth:2.2.0'
     runtimeOnly 'org.postgresql:postgresql'
     runtimeOnly 'org.flywaydb:flyway-database-postgresql'

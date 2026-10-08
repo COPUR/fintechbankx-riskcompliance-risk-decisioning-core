@@ -40,7 +40,7 @@ class RiskAssessmentServiceTest {
     @Test
     void shouldReturnExistingAssessmentWhenTransactionAlreadyAssessed() {
         RiskEvaluationCommand command = new RiskEvaluationCommand("TX-1", new BigDecimal("100"), "AED", false, 10);
-        RiskAssessment existing = RiskAssessment.create("TX-1", new BigDecimal("100"), "AED", 10, RiskDecision.ALLOW, List.of());
+        RiskAssessment existing = RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("100.00"), "AED", false, 10), 10, RiskDecision.ALLOW, List.of());
 
         when(repository.findByTransactionId("TX-1")).thenReturn(Optional.of(existing));
 
@@ -55,7 +55,7 @@ class RiskAssessmentServiceTest {
     @Test
     void shouldEvaluateAndPersistWhenNoExistingAssessment() {
         RiskEvaluationCommand command = new RiskEvaluationCommand("TX-2", new BigDecimal("200"), "AED", true, 60);
-        RiskAssessment assessed = RiskAssessment.create("TX-2", new BigDecimal("200"), "AED", 85, RiskDecision.BLOCK, List.of("HIGH_RISK_COUNTRY"));
+        RiskAssessment assessed = RiskAssessment.create(new RiskEvaluationCommand("TX-2", new BigDecimal("200"), "AED", false, 0), 85, RiskDecision.BLOCK, List.of("HIGH_RISK_COUNTRY"));
 
         when(repository.findByTransactionId("TX-2")).thenReturn(Optional.empty());
         when(policyService.evaluate(command)).thenReturn(assessed);
@@ -71,7 +71,7 @@ class RiskAssessmentServiceTest {
     @Test
     void aNewAssessmentIsSavedThenItsAssessedEventPublishedOnce() {
         RiskEvaluationCommand command = new RiskEvaluationCommand("TX-5", new BigDecimal("12000.00"), "AED", false, 45);
-        RiskAssessment assessed = RiskAssessment.create("TX-5", new BigDecimal("12000.00"), "AED", 45,
+        RiskAssessment assessed = RiskAssessment.create(new RiskEvaluationCommand("TX-5", new BigDecimal("12000.00"), "AED", false, 0), 45,
                 RiskDecision.ALLOW, List.of("HIGH_AMOUNT", "MEDIUM_VELOCITY"));
         RiskAssessedEvent raised = (RiskAssessedEvent) assessed.getDomainEvents().getFirst();
         when(repository.findByTransactionId("TX-5")).thenReturn(Optional.empty());
@@ -90,7 +90,7 @@ class RiskAssessmentServiceTest {
     @Test
     void nothingIsPublishedWhenTheSaveFails() {
         RiskEvaluationCommand command = new RiskEvaluationCommand("TX-6", new BigDecimal("50.00"), "AED", false, 0);
-        RiskAssessment assessed = RiskAssessment.create("TX-6", new BigDecimal("50.00"), "AED", 0, RiskDecision.ALLOW, List.of());
+        RiskAssessment assessed = RiskAssessment.create(new RiskEvaluationCommand("TX-6", new BigDecimal("50.00"), "AED", false, 0), 0, RiskDecision.ALLOW, List.of());
         when(repository.findByTransactionId("TX-6")).thenReturn(Optional.empty());
         when(policyService.evaluate(command)).thenReturn(assessed);
         when(repository.save(assessed)).thenThrow(new IllegalStateException("unique transaction_id"));
@@ -110,7 +110,7 @@ class RiskAssessmentServiceTest {
     @Test
     void shouldRefuseAReusedTransactionIdWithADifferentAmount() {
         RiskEvaluationCommand command = new RiskEvaluationCommand("TX-9", new BigDecimal("101"), "AED", false, 10);
-        RiskAssessment existing = RiskAssessment.create("TX-9", new BigDecimal("100"), "AED", 10, RiskDecision.ALLOW, List.of());
+        RiskAssessment existing = RiskAssessment.create(new RiskEvaluationCommand("TX-9", new BigDecimal("100"), "AED", false, 0), 10, RiskDecision.ALLOW, List.of());
         when(repository.findByTransactionId("TX-9")).thenReturn(Optional.of(existing));
 
         assertThatThrownBy(() -> service.assess(command))
@@ -118,5 +118,18 @@ class RiskAssessmentServiceTest {
                 .hasMessageContaining("TX-9");
         verify(repository, never()).save(any());
         verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void aReusedTransactionIdWithTheHighRiskFlagFlippedIsRefused() {
+        RiskAssessment existing = RiskAssessment.create(
+                new RiskEvaluationCommand("TX-10", new BigDecimal("100.00"), "AED", false, 0), 0, RiskDecision.ALLOW, List.of());
+        when(repository.findByTransactionId("TX-10")).thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service.assess(new RiskEvaluationCommand("TX-10", new BigDecimal("100.00"), "AED", true, 0)))
+                .isInstanceOf(TransactionAlreadyAssessedException.class)
+                .hasMessageContaining("different inputs");
+        verify(repository, never()).save(any());
+        verifyNoInteractions(eventPublisher, policyService);
     }
 }

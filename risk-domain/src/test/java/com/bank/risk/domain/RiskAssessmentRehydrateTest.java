@@ -1,5 +1,6 @@
 package com.bank.risk.domain;
 
+import com.bank.risk.domain.command.RiskEvaluationCommand;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -16,7 +17,7 @@ class RiskAssessmentRehydrateTest {
     @Test
     void rehydrateKeepsTheStoredDecision() {
         RiskAssessment stored = RiskAssessment.rehydrate(new RiskAssessmentSnapshot(
-                RiskAssessmentId.of("RISK-1"), "TX-1", new BigDecimal("12000.00"), "AED", 85,
+                RiskAssessmentId.of("RISK-1"), "TX-1", new BigDecimal("12000.00"), "AED", false, 0, 85,
                 RiskDecision.BLOCK, List.of("HIGH_AMOUNT", "HIGH_RISK_COUNTRY"), DECIDED));
 
         assertThat(stored.getId()).isEqualTo(RiskAssessmentId.of("RISK-1"));
@@ -29,18 +30,40 @@ class RiskAssessmentRehydrateTest {
     @Test
     void rehydrateStillValidatesTheRow() {
         assertThatThrownBy(() -> RiskAssessment.rehydrate(new RiskAssessmentSnapshot(
-                RiskAssessmentId.of("RISK-2"), "TX-2", new BigDecimal("1.00"), "AED", 101,
+                RiskAssessmentId.of("RISK-2"), "TX-2", new BigDecimal("1.00"), "AED", false, 0, 101,
                 RiskDecision.ALLOW, List.of(), DECIDED)))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
-    void matchesComparesCurrencyAndAmountIgnoringScale() {
-        RiskAssessment assessment = RiskAssessment.create("TX-3", new BigDecimal("250.0"), "AED", 0,
-                RiskDecision.ALLOW, List.of());
+    void aRetryMatchesOnlyWhenItRepeatsEveryDecisionInput() {
+        RiskAssessment assessment = RiskAssessment.create(
+                new RiskEvaluationCommand("TX-3", new BigDecimal("250.0"), "AED", false, 45), 15,
+                RiskDecision.ALLOW, List.of("MEDIUM_VELOCITY"));
 
-        assertThat(assessment.matches("AED", new BigDecimal("250.00"))).isTrue();
-        assertThat(assessment.matches("USD", new BigDecimal("250.00"))).isFalse();
-        assertThat(assessment.matches("AED", new BigDecimal("250.01"))).isFalse();
+        assertThat(assessment.matches(new RiskEvaluationCommand("TX-3", new BigDecimal("250.00"), "AED", false, 45)))
+                .as("amount compared by value, not scale").isTrue();
+        assertThat(assessment.matches(new RiskEvaluationCommand("TX-3", new BigDecimal("250.00"), "USD", false, 45))).isFalse();
+        assertThat(assessment.matches(new RiskEvaluationCommand("TX-3", new BigDecimal("250.01"), "AED", false, 45))).isFalse();
+        assertThat(assessment.matches(new RiskEvaluationCommand("TX-3", new BigDecimal("250.00"), "AED", true, 45)))
+                .as("high-risk country flag flipped").isFalse();
+        assertThat(assessment.matches(new RiskEvaluationCommand("TX-3", new BigDecimal("250.00"), "AED", false, 46)))
+                .as("velocity score changed").isFalse();
+        assertThat(assessment.matches(new RiskEvaluationCommand("TX-4", new BigDecimal("250.00"), "AED", false, 45)))
+                .as("another transaction").isFalse();
+    }
+
+    @Test
+    void theDecisionInputsAreKeptWithTheDecision() {
+        RiskAssessment stored = RiskAssessment.rehydrate(new RiskAssessmentSnapshot(
+                RiskAssessmentId.of("RISK-5"), "TX-5", new BigDecimal("80.00"), "AED", true, 72, 70,
+                RiskDecision.REVIEW, List.of("HIGH_RISK_COUNTRY", "HIGH_VELOCITY"), DECIDED));
+
+        assertThat(stored.isHighRiskCountry()).isTrue();
+        assertThat(stored.getVelocityScore()).isEqualTo(72);
+        assertThatThrownBy(() -> RiskAssessment.rehydrate(new RiskAssessmentSnapshot(
+                RiskAssessmentId.of("RISK-6"), "TX-6", new BigDecimal("80.00"), "AED", false, 101, 0,
+                RiskDecision.ALLOW, List.of(), DECIDED)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("velocityScore");
     }
 }

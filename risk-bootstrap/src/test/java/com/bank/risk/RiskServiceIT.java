@@ -97,6 +97,22 @@ class RiskServiceIT {
     }
 
     @Test
+    void replayWithAnyDifferentDecisionInputIsRefused() throws Exception {
+        assess("PAY-RISK-4", "100.00", false, 0).andExpect(status().isCreated())
+            .andExpect(jsonPath("$.decision").value("ALLOW"));
+
+        // Same id, amount and currency, but the caller now flags a high-risk country.
+        assess("PAY-RISK-4", "100.00", true, 0)
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("TRANSACTION_ALREADY_ASSESSED"));
+        assess("PAY-RISK-4", "100.00", false, 45)
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("TRANSACTION_ALREADY_ASSESSED"));
+        assess("PAY-RISK-4", "100.0", false, 0).andExpect(status().isCreated())
+            .andExpect(jsonPath("$.decision").value("ALLOW"));
+    }
+
+    @Test
     void unknownTransactionIsA404WithTheInteractionId() throws Exception {
         mvc.perform(asService(get("/api/v1/risk/assessments/{id}", "PAY-MISSING")))
             .andExpect(status().isNotFound())
@@ -114,6 +130,25 @@ class RiskServiceIT {
         mvc.perform(get("/api/v1/risk/assessments/{id}", "PAY-ANY")).andExpect(status().isUnauthorized());
     }
 
+    /** A client-credentials client that holds SERVICE but is not on SERVICE_CALLERS. */
+    @Test
+    void aServiceClientNotOnTheCallerListIsForbidden() throws Exception {
+        mvc.perform(post("/api/v1/risk/assess")
+                .with(jwt().jwt(j -> j.subject("service-account-customer").claim("azp", "svc-cus-profile-kyc"))
+                    .authorities(new SimpleGrantedAuthority("ROLE_SERVICE")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body("PAY-RISK-5", "10.00", false, 0)))
+            .andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/risk/assessments/{id}", "PAY-ANY")
+                .with(jwt().jwt(j -> j.subject("service-account-customer").claim("azp", "svc-cus-profile-kyc"))
+                    .authorities(new SimpleGrantedAuthority("ROLE_SERVICE"))))
+            .andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/risk/assessments/{id}", "PAY-ANY")
+                .with(jwt().jwt(j -> j.subject("staff-1")).authorities(new SimpleGrantedAuthority("ROLE_BANKER"))))
+            .andExpect(status().isNotFound());
+        assertThat(jdbc.queryForObject("select count(*) from sc_rsk_decisioning.risk_assessment", Integer.class)).isZero();
+    }
+
     private ResultActions assess(String transactionId, String amount, boolean highRiskCountry, int velocity) throws Exception {
         return mvc.perform(asService(post("/api/v1/risk/assess"))
             .contentType(MediaType.APPLICATION_JSON)
@@ -128,6 +163,6 @@ class RiskServiceIT {
 
     private static MockHttpServletRequestBuilder asService(MockHttpServletRequestBuilder request) {
         return request.header("x-fapi-interaction-id", "it-interaction-1")
-            .with(jwt().jwt(j -> j.subject("svc-pay-initiation-settlement")).authorities(new SimpleGrantedAuthority("ROLE_SERVICE")));
+            .with(jwt().jwt(j -> j.subject("service-account-payments").claim("azp", "svc-pay-initiation-settlement")).authorities(new SimpleGrantedAuthority("ROLE_SERVICE")));
     }
 }

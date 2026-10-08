@@ -32,7 +32,7 @@ class TransactionalRiskAssessmentUseCaseTest {
 
     @Test
     void anAssessmentCommitsInOneReadWriteTransaction() {
-        RiskAssessment assessment = RiskAssessment.create("PAY-TX-1", new BigDecimal("100.00"), "AED", 0,
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("PAY-TX-1", new BigDecimal("100.00"), "AED", false, 0), 0,
             RiskDecision.ALLOW, List.of());
         when(delegate.assess(COMMAND)).thenAnswer(invocation -> {
             transactions.log.add("assess");

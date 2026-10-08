@@ -151,6 +151,17 @@ class OutboxRelayTest {
     }
 
     @Test
+    void theTraceContextOfTheOriginalRequestTravelsAsATraceparentHeader() {
+        String traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+        OutboxEventJpaEntity traced = new OutboxEventJpaEntity(UUID.randomUUID(), "RiskAssessment", "RISK-10", 0L,
+            "Risk.RiskAssessment.Assessed.v1", "evt.rsk.risk.assessed.v1", "{}", "corr-10", NOW, traceparent);
+
+        assertThat(header(OutboxRelay.toRecord(traced), "traceparent")).isEqualTo(traceparent);
+        assertThat(OutboxRelay.toRecord(row("RISK-11")).headers().lastHeader("traceparent"))
+            .as("no trace, no invented header").isNull();
+    }
+
+    @Test
     void purgeDeletesRowsPublishedBeforeTheRetentionWindow() {
         when(outbox.deletePublishedBefore(NOW.minus(Duration.ofDays(7)))).thenReturn(3);
 
@@ -165,7 +176,7 @@ class OutboxRelayTest {
     void rowKeepsEveryColumnItWasWrittenWith() {
         UUID id = UUID.randomUUID();
         OutboxEventJpaEntity row = new OutboxEventJpaEntity(id, "RiskAssessment", "RISK-4", 0L,
-            "Risk.RiskAssessment.Assessed.v1", "evt.rsk.risk.assessed.v1", "{}", "corr-4", NOW);
+            "Risk.RiskAssessment.Assessed.v1", "evt.rsk.risk.assessed.v1", "{}", "corr-4", NOW, null);
 
         assertThat(row.getEventId()).isEqualTo(id);
         assertThat(row.getAggregateType()).isEqualTo("RiskAssessment");
@@ -177,7 +188,7 @@ class OutboxRelayTest {
 
     private static OutboxEventJpaEntity row(String aggregateId) {
         return new OutboxEventJpaEntity(UUID.randomUUID(), "RiskAssessment", aggregateId, 0L,
-            "Risk.RiskAssessment.Assessed.v1", "evt.rsk.risk.assessed.v1", "{}", "corr-9", NOW);
+            "Risk.RiskAssessment.Assessed.v1", "evt.rsk.risk.assessed.v1", "{}", "corr-9", NOW, null);
     }
 
     private static TransactionTemplate inlineTransactions() {

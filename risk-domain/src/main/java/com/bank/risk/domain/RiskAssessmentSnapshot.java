@@ -13,6 +13,8 @@ public record RiskAssessmentSnapshot(
         String transactionId,
         BigDecimal amount,
         String currency,
+        boolean highRiskCountry,
+        int velocityScore,
         int score,
         RiskDecision decision,
         List<String> reasons,

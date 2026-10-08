@@ -35,26 +35,35 @@ spring:
     default-schema: sc_rsk_decisioning
     create-schemas: true
     locations: classpath:db/migration
+  # Runtime-neutral Kafka client (platform guide SERVICE_CLIENT_CONFIGURATION.md);
+  # authentication comes from the kafka-msk or kafka-strimzi profile below.
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     security:
       protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
+    admin:
+      # Topics exist only through the platform catalog; the service never creates them.
+      auto-create: false
     producer:
+      client-id: svc-rsk-decisioning
       acks: all
+      compression-type: lz4
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
       properties:
         enable.idempotence: true
         max.in.flight.requests.per.connection: 5
+        # Kafka requires delivery.timeout.ms >= linger.ms + request.timeout.ms;
+        # with the default request timeout (30 s) the producer would not start.
         delivery.timeout.ms: 30000
+        request.timeout.ms: 20000
+        linger.ms: 5
   security:
     oauth2:
       resourceserver:
         jwt:
           issuer-uri: ${OIDC_ISSUER_URI:http://localhost:8180/realms/fintechbankx}
           jwk-set-uri: ${OIDC_JWK_SET_URI:http://localhost:8180/realms/fintechbankx/protocol/openid-connect/certs}
-          # Tokens must be issued for this service (Keycloak audience mapper on the caller's client).
-          audiences: ${OIDC_AUDIENCE:svc-rsk-decisioning}
 
 server:
   port: 8080
@@ -87,11 +96,13 @@ management:
     key-values:
       service: svc-rsk-decisioning
 
-security:
-  dpop:
-    # true once every caller sends DPoP-bound tokens; bound tokens are always checked.
-    required: ${DPOP_REQUIRED:false}
-    proof-window: PT60S
+fintechbankx:
+  security:
+    # Tokens must carry this service id in "aud" (Keycloak audience mapper on each
+    # calling client, platform contract); a blank value stops startup.
+    audience: ${OIDC_AUDIENCE:svc-rsk-decisioning}
+    # Client ids (token "azp") allowed to ask for decisions with the SERVICE role.
+    service-callers: ${SERVICE_CALLERS:svc-pay-initiation-settlement}
 
 risk:
   outbox:
@@ -100,7 +111,9 @@ risk:
       enabled: ${OUTBOX_RELAY_ENABLED:true}
       interval: PT1S
       batch-size: 100
-      send-timeout: PT10S
+      # Longer than delivery.timeout.ms, so the relay never gives up on a send
+      # that Kafka is still retrying (which would publish it twice).
+      send-timeout: PT35S
 
 logging:
   pattern:
@@ -109,11 +122,11 @@ logging:
 ---
 # Amazon MSK with IAM client authentication (SASL_SSL / AWS_MSK_IAM). The pod's
 # IRSA role (deploy/terraform) supplies the credentials. Activated with
-# SPRING_PROFILES_ACTIVE=msk in the Helm values; local runs use PLAINTEXT.
+# SPRING_PROFILES_ACTIVE=kafka-msk in the Helm values; local runs use PLAINTEXT.
 spring:
   config:
     activate:
-      on-profile: msk
+      on-profile: kafka-msk
   kafka:
     security:
       protocol: SASL_SSL
@@ -121,3 +134,21 @@ spring:
       sasl.mechanism: AWS_MSK_IAM
       sasl.jaas.config: "software.amazon.msk.auth.iam.IAMLoginModule required;"
       sasl.client.callback.handler.class: software.amazon.msk.auth.iam.IAMClientCallbackHandler
+
+---
+# In-cluster Strimzi (non-AWS clusters): mutual TLS with the KafkaUser
+# certificate. KAFKA_TLS_CERT, KAFKA_TLS_KEY and KAFKA_TLS_CA hold PEM content
+# mapped from Secret kafka-client-tls (secretKeyRef); no keystore files.
+spring:
+  config:
+    activate:
+      on-profile: kafka-strimzi
+  kafka:
+    security:
+      protocol: SSL
+    ssl:
+      key-store-type: PEM
+      trust-store-type: PEM
+      key-store-certificate-chain: ${KAFKA_TLS_CERT}
+      key-store-key: ${KAFKA_TLS_KEY}
+      trust-store-certificates: ${KAFKA_TLS_CA}
