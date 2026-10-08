@@ -51,6 +51,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -296,6 +297,47 @@ class RiskOutboxIT {
         assertThat(outbox.oldestPendingAgeSeconds()).isBetween(7200.0, 7300.0);
         jdbc.update("update " + OUTBOX + " set parked_at = now()");
         assertThat(outbox.oldestPendingAgeSeconds()).as("parked rows are counted by outbox.parked.events instead").isZero();
+    }
+
+    /**
+     * Two replicas relay at the same moment: the advisory lock lets one of them
+     * publish and the other skip, so every row is sent exactly once. Without
+     * the lock both read the same unpublished rows and send them twice.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void twoRelaysRunningConcurrentlySendEachRowExactlyOnce() throws Exception {
+        for (int i = 1; i <= 5; i++) {
+            assess("PAY-CONC-" + i, "10.00").andExpect(status().isCreated());
+        }
+        Map<String, Integer> sends = new java.util.concurrent.ConcurrentHashMap<>();
+        when(kafka.send(any(ProducerRecord.class))).thenAnswer(call -> {
+            ProducerRecord<String, String> record = call.getArgument(0);
+            sends.merge(new String(record.headers().lastHeader("eventId").value(), StandardCharsets.UTF_8), 1, Integer::sum);
+            Thread.sleep(100); // keep each relay's transaction open long enough to overlap
+            return CompletableFuture.completedFuture((SendResult<String, String>) null);
+        });
+        CyclicBarrier start = new CyclicBarrier(2);
+        ExecutorService replicas = Executors.newFixedThreadPool(2);
+        try {
+            List<Future<Integer>> runs = new java.util.ArrayList<>();
+            for (int replica = 0; replica < 2; replica++) {
+                OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
+                    Clock.systemUTC(), 10, Duration.ofSeconds(5), Duration.ofDays(7), Duration.ofHours(24));
+                runs.add(replicas.submit(() -> {
+                    start.await(10, TimeUnit.SECONDS);
+                    return relay.relayOnce();
+                }));
+            }
+            int published = runs.get(0).get(30, TimeUnit.SECONDS) + runs.get(1).get(30, TimeUnit.SECONDS);
+
+            assertThat(sends).hasSize(5);
+            assertThat(sends.values()).as("each event sent exactly once").containsOnly(1);
+            assertThat(published).isEqualTo(5);
+            assertThat(outbox.countByPublishedAtIsNull()).isZero();
+        } finally {
+            replicas.shutdownNow();
+        }
     }
 
     private void awaitLockWait() throws InterruptedException {
