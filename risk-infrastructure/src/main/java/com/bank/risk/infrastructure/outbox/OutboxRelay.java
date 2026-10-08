@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
@@ -32,7 +33,7 @@ import java.util.concurrent.TimeUnit;
  * <ul>
  *   <li>payload errors (RecordTooLarge, Serialization, InvalidTopic): this row
  *   can never be sent, so it is parked (parked_at set, reason in last_error,
- *   alert on outbox.parked.events) and the batch continues with the next row;</li>
+ *   counted once in outbox.parked.events) and the batch continues with the next row;</li>
  *   <li>everything else, including retriable, authorization and SASL/IAM
  *   failures and any unclassified exception: the batch stops without marking
  *   the row or anything after it, and the relay retries with exponential
@@ -40,7 +41,13 @@ import java.util.concurrent.TimeUnit;
  *   outbox.send.failures and outbox.oldest.pending.age.seconds.</li>
  * </ul>
  * An operator can park a row stuck on a non-payload error by hand (runbook
- * "Parked outbox events"); parked rows are skipped until replayed.
+ * "Parked outbox events"); parked rows are skipped until replayed. The next
+ * run that holds the lock counts such a row once, tagged OperatorPark.
+ *
+ * outbox.parked.events (Prometheus outbox_parked_events_total, platform alert
+ * OutboxEventsParked) counts each parked row exactly once: park_counted is
+ * written in the same transaction, and the counter is incremented only after
+ * that transaction commits.
  *
  * Each risk assessment raises exactly one event, so parking a row never puts
  * two events of one aggregate out of order.
@@ -51,6 +58,8 @@ public class OutboxRelay {
     // ever share a Postgres cluster never block each other.
     static final long RELAY_LOCK_KEY = 0x72736B5F6F7574L; // "rsk_out"
     static final String SEND_FAILURES = "outbox.send.failures";
+    static final String PARKED_EVENTS = "outbox.parked.events";
+    static final String OPERATOR_PARK = "OperatorPark";
     private static final Logger log = LoggerFactory.getLogger(OutboxRelay.class);
 
     private final SpringDataOutboxRepository outbox;
@@ -90,6 +99,11 @@ public class OutboxRelay {
         this.backoffBase = backoffBase;
         this.backoffCap = backoffCap;
         this.registry = registry;
+        // Start the known causes at zero, so the first park is an increase the alert sees.
+        for (String cause : List.of(OPERATOR_PARK, RecordTooLargeException.class.getSimpleName(),
+                SerializationException.class.getSimpleName(), InvalidTopicException.class.getSimpleName())) {
+            parkedCounter(cause);
+        }
     }
 
     /**
@@ -100,10 +114,16 @@ public class OutboxRelay {
             return 0; // backing off after a stopped batch; not even the lock is taken
         }
         boolean[] stopped = {false};
+        int[] operatorParks = {0};
+        List<String> relayParks = new ArrayList<>();
         Integer published = transactions.execute(status -> {
+            operatorParks[0] = 0;
+            relayParks.clear();
             if (!outbox.tryRelayLock(RELAY_LOCK_KEY)) {
                 return 0;
             }
+            // Before the batch is loaded, so the update cannot race the rows parked below.
+            operatorParks[0] = outbox.markOperatorParksCounted();
             List<OutboxEventJpaEntity> batch = outbox.findUnpublishedBatch(batchSize);
             int sent = 0;
             for (OutboxEventJpaEntity row : batch) {
@@ -128,12 +148,18 @@ public class OutboxRelay {
                     Instant now = clock.instant();
                     row.markFailed(describe(e));
                     row.park(now);
+                    relayParks.add(underlying(e).getClass().getSimpleName());
                     log.error("Outbox relay parked event {} for {} after {} attempt(s): {}; replay it by hand",
                         row.getEventId(), row.getTopic(), row.getAttempts(), row.getLastError(), e);
                 }
             }
             return sent;
         });
+        // Committed: count each park now (a rolled-back run left its rows uncounted and unparked).
+        if (operatorParks[0] > 0) {
+            parkedCounter(OPERATOR_PARK).increment(operatorParks[0]);
+        }
+        relayParks.forEach(cause -> parkedCounter(cause).increment());
         scheduleNextAttempt(stopped[0]);
         return published == null ? 0 : published;
     }
@@ -163,6 +189,14 @@ public class OutboxRelay {
             .tag("exception", underlying(failure).getClass().getSimpleName())
             .register(registry)
             .increment();
+    }
+
+    private Counter parkedCounter(String cause) {
+        // One tag only; app and squad are common tags (management.metrics.tags).
+        return Counter.builder(PARKED_EVENTS)
+            .description("Outbox rows parked, once per row, by exception class or OperatorPark")
+            .tag("exception", cause)
+            .register(registry);
     }
 
     public int purgePublished() {

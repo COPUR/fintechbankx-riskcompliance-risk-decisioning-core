@@ -23,7 +23,7 @@ import java.time.Duration;
 public class OutboxConfiguration {
 
     static final String PENDING_GAUGE = "outbox.pending.events";
-    static final String PARKED_GAUGE = "outbox.parked.events";
+    static final String PARKED_GAUGE = "outbox.parked.rows";
     static final String OLDEST_PENDING_AGE_GAUGE = "outbox.oldest.pending.age.seconds";
 
     @Bean
@@ -65,9 +65,10 @@ public class OutboxConfiguration {
     }
 
     /**
-     * Events the relay gave up on (Prometheus outbox_parked_events). Alert on
-     * any value above zero: a consumer is missing a decision until the row is
-     * replayed (runbook "Parked outbox events").
+     * Rows parked now (Prometheus outbox_parked_rows): a consumer is missing
+     * each of these decisions until the row is replayed (runbook "Parked outbox
+     * events"). The platform alert OutboxEventsParked uses the relay's counter
+     * outbox.parked.events instead.
      */
     @Bean
     Gauge riskOutboxParkedGauge(MeterRegistry registry, SpringDataOutboxRepository outbox) {

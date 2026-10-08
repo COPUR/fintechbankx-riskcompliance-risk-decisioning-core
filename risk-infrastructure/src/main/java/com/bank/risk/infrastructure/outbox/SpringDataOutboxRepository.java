@@ -32,6 +32,18 @@ public interface SpringDataOutboxRepository extends JpaRepository<OutboxEventJpa
 
     long countByPublishedAtIsNull();
 
+    /**
+     * Marks rows an operator parked by hand (runbook "Manual park") as counted
+     * and returns how many there were. Relay parks are written counted, so only
+     * operator parks match; the update makes sure no row is counted twice.
+     */
+    @Modifying
+    @Query(value = """
+        update outbox_event set park_counted = true
+        where parked_at is not null and published_at is null and not park_counted
+        """, nativeQuery = true)
+    int markOperatorParksCounted();
+
     /** Age in seconds of the oldest row waiting for the relay (not published, not parked); 0 when none waits. */
     @Query(value = """
         select coalesce(extract(epoch from (now() - min(created_at))), 0)::float8 from outbox_event
