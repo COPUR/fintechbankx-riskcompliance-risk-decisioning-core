@@ -58,8 +58,15 @@ class RiskEventsAsyncApiContractTest {
         assertThat(data.fieldNames()).toIterable()
             .containsAll(this.<List<String>>at(dataSchema, "required"))
             .allMatch(field -> this.<Map<String, Object>>at(dataSchema, "properties").containsKey(field));
-        // Additive optional field (minor version 1.1.0): consumers must accept values they do not know.
-        assertThat(this.<String>at(contract, "info", "version")).isEqualTo("1.1.0");
+        // The spec stays 1.0.0 until it first lands on the catalog's main (governance change rules);
+        // the optional attestationSource ships in 1.0.0, so no "since" history in descriptions.
+        String version = at(contract, "info", "version");
+        assertThat(version).isEqualTo("1.0.0");
+        String address = at(contract, "channels", "assessed", "address");
+        assertThat(address).as("topic suffix .vN matches the contract major")
+            .endsWith(".v" + version.substring(0, version.indexOf('.')));
+        assertThat(this.<String>at(dataSchema, "properties", "attestationSource", "description"))
+            .doesNotContainIgnoringCase("since");
         assertThat(this.<List<String>>at(dataSchema, "required")).doesNotContain("attestationSource");
         assertThat(this.<List<String>>at(dataSchema, "properties", "attestationSource", "enum"))
             .contains(data.get("attestationSource").asText());
