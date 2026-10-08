@@ -13,7 +13,7 @@ class RiskAssessmentTest {
 
     @Test
     void shouldCreateAssessmentAndExposeBehavior() {
-        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("500"), "AED", false, 0, "svc-pay-initiation-settlement"),
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("500"), "AED", false, 0, "svc-pay-initiation-settlement", PaymentType.TRANSFER),
                 55,
                 RiskDecision.REVIEW,
                 List.of("MEDIUM_VELOCITY")
@@ -29,7 +29,7 @@ class RiskAssessmentTest {
     @Test
     void aNewDecisionRecordsThatItRestsOnCallerAttestedFactsAndWhoAttestedThem() {
         RiskAssessment assessment = RiskAssessment.create(
-                new RiskEvaluationCommand("PAY-9", new BigDecimal("9000.00"), "USD", false, 0, "svc-pay-initiation-settlement"),
+                new RiskEvaluationCommand("PAY-9", new BigDecimal("9000.00"), "USD", false, 0, "svc-pay-initiation-settlement", PaymentType.TRANSFER),
                 0, RiskDecision.ALLOW, List.of(), "rsk-policy-v2");
 
         assertThat(assessment.getAttestationSource()).isEqualTo(AttestationSource.CALLER_ATTESTED);
@@ -40,7 +40,7 @@ class RiskAssessmentTest {
     void theRuleSetVersionIsRequired() {
         for (String missing : new String[] {null, "", " "}) {
             assertThatThrownBy(() -> RiskAssessment.create(
-                    new RiskEvaluationCommand("TX-1", new BigDecimal("10"), "USD", false, 0, "svc-pay-initiation-settlement"),
+                    new RiskEvaluationCommand("TX-1", new BigDecimal("10"), "USD", false, 0, "svc-pay-initiation-settlement", PaymentType.TRANSFER),
                     0, RiskDecision.ALLOW, List.of(), missing))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("ruleSetVersion");
@@ -49,11 +49,11 @@ class RiskAssessmentTest {
 
     @Test
     void shouldRejectInvalidScoreAndIdentifiers() {
-        assertThatThrownBy(() -> RiskAssessment.create(new RiskEvaluationCommand("", new BigDecimal("10"), "AED", false, 0, "svc-pay-initiation-settlement"), 10, RiskDecision.ALLOW, List.of(), "rsk-policy-v2"))
+        assertThatThrownBy(() -> RiskAssessment.create(new RiskEvaluationCommand("", new BigDecimal("10"), "AED", false, 0, "svc-pay-initiation-settlement", PaymentType.TRANSFER), 10, RiskDecision.ALLOW, List.of(), "rsk-policy-v2"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("transactionId");
 
-        assertThatThrownBy(() -> RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("10"), "AED", false, 0, "svc-pay-initiation-settlement"), 101, RiskDecision.BLOCK, List.of("x"), "rsk-policy-v2"))
+        assertThatThrownBy(() -> RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("10"), "AED", false, 0, "svc-pay-initiation-settlement", PaymentType.TRANSFER), 101, RiskDecision.BLOCK, List.of("x"), "rsk-policy-v2"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("score");
     }

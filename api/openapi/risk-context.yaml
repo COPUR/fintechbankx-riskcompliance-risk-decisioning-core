@@ -14,7 +14,7 @@ paths:
         Decides once per transactionId. transactionId is unique across all
         callers of this service, so callers must namespace their ids (for
         example PAY-<payment id>). A retry that repeats every input (amount by
-        value, currency, highRiskCountry, velocityScore) returns the stored
+        value, currency, highRiskCountry, velocityScore, paymentType) returns the stored
         decision; the same transactionId with any different input is a 409
         TRANSACTION_ALREADY_ASSESSED. A 409 DUPLICATE_REQUEST means a
         concurrent first request for the same transactionId won; retry to get
@@ -149,7 +149,7 @@ components:
   schemas:
     RiskAssessmentRequest:
       type: object
-      required: [transactionId, amount, currency, highRiskCountry, velocityScore]
+      required: [transactionId, amount, currency, highRiskCountry, velocityScore, paymentType]
       properties:
         transactionId:
           type: string
@@ -185,6 +185,15 @@ components:
             Caller's velocity score, 0 to 100. Required: an omitted or null
             value is a 400 INVALID_REQUEST, never taken as 0. Stored with the
             decision as caller-attested.
+        paymentType:
+          type: string
+          enum: [TRANSFER, WIRE_TRANSFER, ACH, CHECK, CREDIT_CARD, DEBIT_CARD, MOBILE_PAYMENT, LOAN_PAYMENT, BILL_PAYMENT]
+          description: |-
+            Kind of payment, with the monolith's PaymentType values. Required:
+            an omitted, null or unknown value is a 400 INVALID_REQUEST. Stored
+            with the decision and compared on retry. Policy rsk-policy-v3
+            decides a MOBILE_PAYMENT above 5000 USD as BLOCK
+            (SUSPICIOUS_MOBILE_AMOUNT).
     RiskAssessmentResponse:
       type: object
       required: [assessmentId, transactionId, score, decision, reasons, assessedAt]
@@ -202,11 +211,13 @@ components:
           type: array
           description: |-
             Policy reason codes, for example HIGH_AMOUNT, VERY_HIGH_AMOUNT,
-            HIGH_RISK_COUNTRY, HIGH_VELOCITY, MEDIUM_VELOCITY. Amount
-            thresholds are per currency (USD only today); for any other
-            currency the amount is not scored, UNSUPPORTED_CURRENCY is added and
-            the decision is at least REVIEW. Clients must accept codes they do
-            not know.
+            HIGH_RISK_COUNTRY, HIGH_VELOCITY, MEDIUM_VELOCITY,
+            SUSPICIOUS_ROUND_AMOUNT, SUSPICIOUS_MOBILE_AMOUNT. Amount
+            thresholds and suspicious patterns are per currency (USD only
+            today); for any other currency the amount is not scored,
+            UNSUPPORTED_CURRENCY is added and the decision is at least REVIEW.
+            A suspicious pattern decides BLOCK. Clients must accept codes they
+            do not know.
           items:
             type: string
         assessedAt:
@@ -221,8 +232,9 @@ components:
         ruleSetVersion:
           type: string
           description: |-
-            Policy rule set that made the decision, for example rsk-policy-v2
-            (per-currency amount thresholds). A retry returns the stored
+            Policy rule set that made the decision, for example rsk-policy-v3
+            (per-currency amount thresholds and the monolith's suspicious
+            patterns). A retry returns the stored
             decision with the version it was made under.
         attestedBy:
           type: string

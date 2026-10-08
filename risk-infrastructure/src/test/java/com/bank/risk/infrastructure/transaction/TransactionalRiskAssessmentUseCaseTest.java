@@ -1,5 +1,6 @@
 package com.bank.risk.infrastructure.transaction;
 
+import com.bank.risk.domain.PaymentType;
 import com.bank.risk.domain.RiskAssessment;
 import com.bank.risk.domain.RiskDecision;
 import com.bank.risk.domain.port.in.RiskEvaluationCommand;
@@ -28,11 +29,11 @@ class TransactionalRiskAssessmentUseCaseTest {
         delegate, new TransactionTemplate(transactions), readOnly(transactions));
 
     private static final RiskEvaluationCommand COMMAND =
-        new RiskEvaluationCommand("PAY-TX-1", new BigDecimal("100.00"), "AED", false, 0, "svc-pay-initiation-settlement");
+        new RiskEvaluationCommand("PAY-TX-1", new BigDecimal("100.00"), "AED", false, 0, "svc-pay-initiation-settlement", PaymentType.TRANSFER);
 
     @Test
     void anAssessmentCommitsInOneReadWriteTransaction() {
-        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("PAY-TX-1", new BigDecimal("100.00"), "AED", false, 0, "svc-pay-initiation-settlement"), 0,
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("PAY-TX-1", new BigDecimal("100.00"), "AED", false, 0, "svc-pay-initiation-settlement", PaymentType.TRANSFER), 0,
             RiskDecision.ALLOW, List.of(), "rsk-policy-v2");
         when(delegate.assess(COMMAND)).thenAnswer(invocation -> {
             transactions.log.add("assess");

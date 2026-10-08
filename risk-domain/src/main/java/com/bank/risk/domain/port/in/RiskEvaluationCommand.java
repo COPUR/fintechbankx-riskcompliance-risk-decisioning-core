@@ -1,5 +1,6 @@
 package com.bank.risk.domain.port.in;
 
+import com.bank.risk.domain.PaymentType;
 import java.math.BigDecimal;
 import java.util.Currency;
 import java.util.regex.Pattern;
@@ -16,6 +17,7 @@ import java.util.regex.Pattern;
  * velocityScore 0 to 100. attestedBy names who stated highRiskCountry and
  * velocityScore (the calling client's azp, or a staff member's subject), at
  * most 255 characters; it is recorded with the decision, not compared on retry.
+ * paymentType is required (rsk-policy-v3): it is a fact of the decision.
  */
 public record RiskEvaluationCommand(
         String transactionId,
@@ -23,7 +25,8 @@ public record RiskEvaluationCommand(
         String currency,
         boolean highRiskCountry,
         int velocityScore,
-        String attestedBy
+        String attestedBy,
+        PaymentType paymentType
 ) {
     public static final int MAX_ATTESTED_BY_LENGTH = 255;
     public static final int MAX_TRANSACTION_ID_LENGTH = 128;
@@ -60,6 +63,9 @@ public record RiskEvaluationCommand(
         }
         if (attestedBy.length() > MAX_ATTESTED_BY_LENGTH) {
             throw new IllegalArgumentException("attestedBy must be at most " + MAX_ATTESTED_BY_LENGTH + " characters");
+        }
+        if (paymentType == null) {
+            throw new IllegalArgumentException("paymentType is required");
         }
     }
 

@@ -1,5 +1,6 @@
 package com.bank.risk.infrastructure.contract;
 
+import com.bank.risk.domain.PaymentType;
 import com.bank.risk.domain.port.in.RiskEvaluationCommand;
 import com.bank.risk.domain.RiskAssessment;
 import com.bank.risk.domain.RiskDecision;
@@ -32,7 +33,7 @@ class RiskEventsAsyncApiContractTest {
     void assessedEventMatchesTheContract() throws IOException {
         Map<String, Object> contract = load("svc-rsk-decisioning.yaml");
         Map<String, Object> envelopeSchemas = load("common/event-envelope.yaml");
-        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("PAY-CONTRACT-1", new BigDecimal("12000.50"), "AED", false, 0, "svc-pay-initiation-settlement"), 75,
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("PAY-CONTRACT-1", new BigDecimal("12000.50"), "AED", false, 0, "svc-pay-initiation-settlement", PaymentType.TRANSFER), 75,
             RiskDecision.REVIEW, List.of("HIGH_AMOUNT", "HIGH_RISK_COUNTRY"), "rsk-policy-v2");
         OutboxEventJpaEntity row = new RiskEventEnvelopeFactory(json)
             .toOutboxRow(assessment.getDomainEvents().getFirst(), "corr-contract", null);

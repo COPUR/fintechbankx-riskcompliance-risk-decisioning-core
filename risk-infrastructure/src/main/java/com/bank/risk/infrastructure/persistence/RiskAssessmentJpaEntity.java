@@ -60,13 +60,17 @@ public class RiskAssessmentJpaEntity {
     @Column(name = "rule_set_version", nullable = false, length = 64, updatable = false)
     private String ruleSetVersion;
 
+    @Column(name = "payment_type", nullable = false, length = 32, updatable = false)
+    private String paymentType;
+
     protected RiskAssessmentJpaEntity() {
     }
 
     RiskAssessmentJpaEntity(String assessmentId, String transactionId, BigDecimal amount, String currency,
                             boolean highRiskCountry, int velocityScore, int score,
                             String decision, List<String> reasons, Instant assessedAt,
-                            String attestationSource, String attestedBy, String ruleSetVersion) {
+                            String attestationSource, String attestedBy, String ruleSetVersion,
+                            String paymentType) {
         this.assessmentId = assessmentId;
         this.transactionId = transactionId;
         this.amount = amount;
@@ -80,6 +84,7 @@ public class RiskAssessmentJpaEntity {
         this.attestationSource = attestationSource;
         this.attestedBy = attestedBy;
         this.ruleSetVersion = ruleSetVersion;
+        this.paymentType = paymentType;
     }
 
     public String getAssessmentId() { return assessmentId; }
@@ -95,4 +100,5 @@ public class RiskAssessmentJpaEntity {
     public String getAttestationSource() { return attestationSource; }
     public String getAttestedBy() { return attestedBy; }
     public String getRuleSetVersion() { return ruleSetVersion; }
+    public String getPaymentType() { return paymentType; }
 }

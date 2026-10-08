@@ -1,5 +1,6 @@
 package com.bank.risk.infrastructure.persistence;
 
+import com.bank.risk.domain.PaymentType;
 import com.bank.risk.domain.port.in.RiskEvaluationCommand;
 import com.bank.risk.domain.RiskAssessment;
 import com.bank.risk.domain.RiskDecision;
@@ -14,7 +15,7 @@ class RiskAssessmentPersistenceMapperTest {
 
     @Test
     void roundTripKeepsTheDecisionOfRecord() {
-        RiskAssessment decided = RiskAssessment.create(new RiskEvaluationCommand("TX-MAP-1", new BigDecimal("60000.00"), "AED", false, 0, "svc-pay-initiation-settlement"), 85,
+        RiskAssessment decided = RiskAssessment.create(new RiskEvaluationCommand("TX-MAP-1", new BigDecimal("60000.00"), "AED", false, 0, "svc-pay-initiation-settlement", PaymentType.TRANSFER), 85,
                 RiskDecision.BLOCK, List.of("HIGH_AMOUNT", "VERY_HIGH_AMOUNT", "HIGH_VELOCITY"), "rsk-policy-v2");
 
         RiskAssessmentJpaEntity row = RiskAssessmentPersistenceMapper.toEntity(decided);

@@ -3,3 +3,7 @@
 # is a 400. The only SERVICE caller, svc-pay-initiation-settlement, must always send it (relayed to the payments owner).
 # Delete this file in the first PR after this one merges (scripts/ci/oasdiff-breaking.sh enforces it).
 POST /api/v1/risk/assess the request property 'highRiskCountry' became required
+# Accepted 2026-10-08 with regression finding LP-05 (pre-release spec): rsk-policy-v3 restores the monolith's refusal of
+# a MOBILE_PAYMENT above 5000 USD, which needs the payment type. It is required and fails closed like the other risk
+# facts; svc-pay-initiation-settlement must send its PaymentType value (relayed to the payments owner).
+POST /api/v1/risk/assess added the new required request property 'paymentType'

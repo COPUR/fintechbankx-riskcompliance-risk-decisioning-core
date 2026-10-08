@@ -1,5 +1,6 @@
 package com.bank.risk.infrastructure.web.dto;
 
+import com.bank.risk.domain.PaymentType;
 import com.bank.risk.domain.port.in.RiskEvaluationCommand;
 import com.bank.risk.domain.RiskAssessment;
 import com.bank.risk.domain.RiskDecision;
@@ -14,7 +15,7 @@ class RiskAssessmentResponseTest {
 
     @Test
     void shouldMapFromDomain() {
-        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("50"), "AED", false, 0, "svc-pay-initiation-settlement"),
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("50"), "AED", false, 0, "svc-pay-initiation-settlement", PaymentType.TRANSFER),
                 25,
                 RiskDecision.ALLOW,
                 List.of("COMPLIANT")

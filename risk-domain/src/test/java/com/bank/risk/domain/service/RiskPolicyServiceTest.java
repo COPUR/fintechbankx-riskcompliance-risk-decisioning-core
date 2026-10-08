@@ -1,5 +1,6 @@
 package com.bank.risk.domain.service;
 
+import com.bank.risk.domain.PaymentType;
 import com.bank.risk.domain.RiskDecision;
 import com.bank.risk.domain.port.in.RiskEvaluationCommand;
 import org.junit.jupiter.api.Test;
@@ -17,7 +18,7 @@ class RiskPolicyServiceTest {
 
     @Test
     void shouldAllowLowRiskTransaction() {
-        var command = new RiskEvaluationCommand("TX-LOW", new BigDecimal("100"), "USD", false, 5, "svc-pay-initiation-settlement");
+        var command = new RiskEvaluationCommand("TX-LOW", new BigDecimal("100"), "USD", false, 5, "svc-pay-initiation-settlement", PaymentType.TRANSFER);
 
         var assessment = service.evaluate(command);
 
@@ -27,7 +28,7 @@ class RiskPolicyServiceTest {
 
     @Test
     void shouldRequireReviewForMediumRiskTransaction() {
-        var command = new RiskEvaluationCommand("TX-REV", new BigDecimal("12000.50"), "USD", false, 70, "svc-pay-initiation-settlement");
+        var command = new RiskEvaluationCommand("TX-REV", new BigDecimal("12000.50"), "USD", false, 70, "svc-pay-initiation-settlement", PaymentType.TRANSFER);
 
         var assessment = service.evaluate(command);
 
@@ -37,7 +38,7 @@ class RiskPolicyServiceTest {
 
     @Test
     void shouldBlockForHighRiskSignals() {
-        var command = new RiskEvaluationCommand("TX-BLOCK", new BigDecimal("60000"), "USD", true, 80, "svc-pay-initiation-settlement");
+        var command = new RiskEvaluationCommand("TX-BLOCK", new BigDecimal("60000"), "USD", true, 80, "svc-pay-initiation-settlement", PaymentType.TRANSFER);
 
         var assessment = service.evaluate(command);
 
@@ -48,7 +49,7 @@ class RiskPolicyServiceTest {
 
     private static RiskEvaluationCommand command(String amount, String currency, boolean highRiskCountry, int velocity) {
         return new RiskEvaluationCommand("TX-CCY", new BigDecimal(amount), currency, highRiskCountry, velocity,
-                "svc-pay-initiation-settlement");
+                "svc-pay-initiation-settlement", PaymentType.TRANSFER);
     }
 
     @Test

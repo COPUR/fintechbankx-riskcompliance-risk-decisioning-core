@@ -24,6 +24,7 @@ public final class RiskAssessment {
     private final AttestationSource attestationSource;
     private final String attestedBy;
     private final String ruleSetVersion;
+    private final PaymentType paymentType;
     private final List<RiskDomainEvent> domainEvents = new ArrayList<>();
 
     private RiskAssessment(
@@ -39,7 +40,8 @@ public final class RiskAssessment {
             Instant assessedAt,
             AttestationSource attestationSource,
             String attestedBy,
-            String ruleSetVersion
+            String ruleSetVersion,
+            PaymentType paymentType
     ) {
         this.id = Objects.requireNonNull(id, "id is required");
         if (transactionId == null || transactionId.isBlank()) {
@@ -75,6 +77,7 @@ public final class RiskAssessment {
             throw new IllegalArgumentException("ruleSetVersion is required");
         }
         this.ruleSetVersion = ruleSetVersion;
+        this.paymentType = Objects.requireNonNull(paymentType, "paymentType is required");
     }
 
     /**
@@ -105,7 +108,8 @@ public final class RiskAssessment {
                 // The policy only applies thresholds to the caller's statements.
                 AttestationSource.CALLER_ATTESTED,
                 inputs.attestedBy(),
-                ruleSetVersion
+                ruleSetVersion,
+                inputs.paymentType()
         );
         assessment.domainEvents.add(assessment.assessedEvent());
         return assessment;
@@ -131,7 +135,8 @@ public final class RiskAssessment {
                 snapshot.assessedAt(),
                 snapshot.attestationSource(),
                 snapshot.attestedBy(),
-                snapshot.ruleSetVersion()
+                snapshot.ruleSetVersion(),
+                snapshot.paymentType()
         );
     }
 
@@ -146,7 +151,8 @@ public final class RiskAssessment {
                 && currency.equals(request.currency())
                 && amount.compareTo(request.amount()) == 0
                 && highRiskCountry == request.highRiskCountry()
-                && velocityScore == request.velocityScore();
+                && velocityScore == request.velocityScore()
+                && paymentType == request.paymentType();
     }
 
     /**
@@ -236,4 +242,10 @@ public final class RiskAssessment {
     public boolean requiresManualReview() {
         return decision == RiskDecision.REVIEW;
     }
+
+    /** The payment type the caller stated; a fact of the decision, compared on retry. */
+    public PaymentType getPaymentType() {
+        return paymentType;
+    }
+
 }

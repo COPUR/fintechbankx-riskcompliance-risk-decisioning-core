@@ -58,8 +58,8 @@ class RiskServiceIT {
     @Test
     void theDatabaseRefusesADecisionWithoutAttesterOrAttestationSource() {
         String columns = "assessment_id, transaction_id, amount, currency, high_risk_country, velocity_score, score,"
-            + " decision, reasons, assessed_at, rule_set_version";
-        String values = "'RISK-NULL-%s', 'TX-NULL-%s', 10.00, 'AED', false, 0, 0, 'ALLOW', '[]'::jsonb, now(), 'rsk-policy-v2'";
+            + " decision, reasons, assessed_at, rule_set_version, payment_type";
+        String values = "'RISK-NULL-%s', 'TX-NULL-%s', 10.00, 'AED', false, 0, 0, 'ALLOW', '[]'::jsonb, now(), 'rsk-policy-v2', 'TRANSFER'";
 
         assertThatThrownBy(() -> jdbc.update("insert into sc_rsk_decisioning.risk_assessment (" + columns
                 + ", attestation_source) values (" + values.formatted("1", "1") + ", 'CALLER_ATTESTED')"))

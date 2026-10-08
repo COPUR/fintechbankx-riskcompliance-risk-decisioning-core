@@ -1,5 +1,6 @@
 package com.bank.risk.infrastructure.web;
 
+import com.bank.risk.domain.PaymentType;
 import com.bank.risk.domain.RiskAssessment;
 import com.bank.risk.domain.RiskDecision;
 import com.bank.risk.domain.TransactionAlreadyAssessedException;
@@ -63,7 +64,7 @@ class RiskControllerTest {
     void theCallerWhoStatedTheRiskFactsIsPassedInTheCommandAndReturned(String name, String subject, String azp,
                                                                      String role, String attestedBy) throws Exception {
         RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-7", new BigDecimal("10"), "USD",
-                false, 0, attestedBy), 0, RiskDecision.ALLOW, List.of(), "rsk-policy-v2");
+                false, 0, attestedBy, PaymentType.TRANSFER), 0, RiskDecision.ALLOW, List.of(), "rsk-policy-v2");
         when(service.assess(any(RiskEvaluationCommand.class))).thenReturn(assessment);
 
         mockMvc.perform(post("/api/v1/risk/assess")
@@ -83,7 +84,7 @@ class RiskControllerTest {
 
     @Test
     void shouldAssessRisk() throws Exception {
-        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("200"), "AED", false, 0, "svc-pay-initiation-settlement"), 60, RiskDecision.REVIEW, List.of("HIGH_AMOUNT"), "rsk-policy-v2");
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("200"), "AED", false, 0, "svc-pay-initiation-settlement", PaymentType.TRANSFER), 60, RiskDecision.REVIEW, List.of("HIGH_AMOUNT"), "rsk-policy-v2");
         when(service.assess(any(RiskEvaluationCommand.class))).thenReturn(assessment);
 
         mockMvc.perform(post("/api/v1/risk/assess")
@@ -98,7 +99,7 @@ class RiskControllerTest {
 
     @Test
     void shouldReturnAssessmentByTransactionId() throws Exception {
-        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-2", new BigDecimal("100"), "AED", false, 0, "svc-pay-initiation-settlement"), 10, RiskDecision.ALLOW, List.of("COMPLIANT"), "rsk-policy-v2");
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-2", new BigDecimal("100"), "AED", false, 0, "svc-pay-initiation-settlement", PaymentType.TRANSFER), 10, RiskDecision.ALLOW, List.of("COMPLIANT"), "rsk-policy-v2");
         when(service.findByTransactionId("TX-2")).thenReturn(Optional.of(assessment));
         when(service.findByTransactionId("TX-404")).thenReturn(Optional.empty());
 

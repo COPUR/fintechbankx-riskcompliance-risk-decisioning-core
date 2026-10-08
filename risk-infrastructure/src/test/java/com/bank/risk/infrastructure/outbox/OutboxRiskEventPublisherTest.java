@@ -1,5 +1,6 @@
 package com.bank.risk.infrastructure.outbox;
 
+import com.bank.risk.domain.PaymentType;
 import com.bank.risk.domain.port.in.RiskEvaluationCommand;
 import com.bank.risk.domain.RiskAssessment;
 import com.bank.risk.domain.RiskDecision;
@@ -33,7 +34,7 @@ class OutboxRiskEventPublisherTest {
     }
 
     private static RiskAssessment assessment(String transactionId) {
-        return RiskAssessment.create(new RiskEvaluationCommand(transactionId, new BigDecimal("12000.00"), "AED", false, 0, "svc-pay-initiation-settlement"), 60, RiskDecision.REVIEW,
+        return RiskAssessment.create(new RiskEvaluationCommand(transactionId, new BigDecimal("12000.00"), "AED", false, 0, "svc-pay-initiation-settlement", PaymentType.TRANSFER), 60, RiskDecision.REVIEW,
             List.of("HIGH_AMOUNT", "MEDIUM_VELOCITY"), "rsk-policy-v2");
     }
 
