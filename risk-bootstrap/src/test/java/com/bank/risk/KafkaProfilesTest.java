@@ -45,6 +45,23 @@ class KafkaProfilesTest {
     }
 
     @Test
+    void producerBlocksAtMostTenSecondsSoOneRelayTickCannotHoldTheLockForLong() {
+        Map<String, Object> producer = bind(null).buildProducerProperties(null);
+
+        // Without it, a missing topic blocks send() for the 60 s default plus the send timeout,
+        // while the relay holds its DB connection and the advisory lock.
+        assertThat(producer).containsEntry(ProducerConfig.MAX_BLOCK_MS_CONFIG, "10000");
+    }
+
+    @Test
+    void theMskProducerIsBuiltWithTheTenSecondBlockLimit() {
+        Map<String, Object> producer = bind("kafka-msk").buildProducerProperties(null);
+        producer.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9098");
+
+        assertThat(new ProducerConfig(producer).getLong(ProducerConfig.MAX_BLOCK_MS_CONFIG)).isEqualTo(10_000L);
+    }
+
+    @Test
     void kafkaMskProfileBuildsAnIamAuthenticatedProducer() {
         Map<String, Object> producer = bind("kafka-msk").buildProducerProperties(null);
 
