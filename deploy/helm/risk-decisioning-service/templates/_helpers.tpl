@@ -5,6 +5,7 @@
 {{- define "risk.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "risk.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: service
 {{- end -}}
 
 {{- define "risk.labels" -}}
