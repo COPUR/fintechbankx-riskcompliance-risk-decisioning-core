@@ -48,6 +48,8 @@ jobs:
         run: |
           chart=deploy/helm/risk-decisioning-service
           args="--set image.repository=ci/risk-decisioning-service --set image.tag=${{ github.sha }} --set externalSecret.remoteSecretName=ci/risk-decisioning-service/db-app"
+          # Schema owner credential, read only by the Flyway migration Job (decision 0002).
+          args="$args --set externalSecret.migrationSecretName=ci/risk-decisioning-service/db-migration"
           args="$args --set config.DB_URL=jdbc:postgresql://ci:5432/db?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem"
           args="$args --set config.KAFKA_BOOTSTRAP_SERVERS=ci:9098"
           args="$args --set config.OIDC_ISSUER_URI=https://ci/realms/fintechbankx --set config.OIDC_JWK_SET_URI=https://ci/certs"
@@ -126,19 +128,29 @@ jobs:
           '
           # ... and the RDS CA bundle is mounted read-only, not optional, and exported as DB_SSL_ROOT_CERT,
           # always: there is no switch to turn it off (this service always has a PostgreSQL database).
+          # The Deployment and the Flyway migration Job (decision 0002) both connect to Aurora, so both are checked.
           check_database_ca() {
           python3 -c '
           import sys, yaml
-          dep = [d for d in yaml.safe_load_all(sys.stdin) if d and d.get("kind") == "Deployment"][0]["spec"]["template"]["spec"]
-          vols = {v["name"]: v for v in dep.get("volumes", [])}
-          ca = vols.get("database-ca", {}).get("configMap")
-          assert ca and ca["name"] == "rds-ca-bundle" and not ca.get("optional", False), f"database-ca volume: {ca}"
-          assert ca.get("items") == [{"key": "global-bundle.pem", "path": "global-bundle.pem"}], ca.get("items")
-          c = dep["containers"][0]
-          mounts = [m for m in c.get("volumeMounts", []) if m["name"] == "database-ca"]
-          assert mounts == [{"name": "database-ca", "mountPath": "/etc/fintechbankx/rds-ca", "readOnly": True}], mounts
-          env = {e["name"]: e.get("value") for e in c.get("env", [])}
-          assert env.get("DB_SSL_ROOT_CERT") == "/etc/fintechbankx/rds-ca/global-bundle.pem", env
+          docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+          workloads = [d for d in docs if d.get("kind") in ("Deployment", "Job")]
+          assert [d["kind"] for d in workloads].count("Deployment") == 1, "expected one Deployment"
+          assert [d["kind"] for d in workloads].count("Job") == 1, "expected one migration Job"
+          for w in workloads:
+              where = w["kind"] + "/" + w["metadata"]["name"]
+              pod = w["spec"]["template"]["spec"]
+              vols = {v["name"]: v for v in pod.get("volumes", [])}
+              ca = vols.get("database-ca", {}).get("configMap")
+              assert ca and ca["name"] == "rds-ca-bundle" and not ca.get("optional", False), f"{where} database-ca volume: {ca}"
+              items = ca.get("items")
+              assert items == [{"key": "global-bundle.pem", "path": "global-bundle.pem"}], f"{where}: {items}"
+              for c in pod["containers"]:
+                  container = where + " " + c["name"]
+                  mounts = [m for m in c.get("volumeMounts", []) if m["name"] == "database-ca"]
+                  assert mounts == [{"name": "database-ca", "mountPath": "/etc/fintechbankx/rds-ca", "readOnly": True}], f"{container}: {mounts}"
+                  env = {e["name"]: e.get("value") for e in c.get("env", [])}
+                  assert env.get("DB_SSL_ROOT_CERT") == "/etc/fintechbankx/rds-ca/global-bundle.pem", f"{container}: {env}"
+          print(f"database CA mounted read-only and DB_SSL_ROOT_CERT set in {len(workloads)} workloads")
           '
           }
           check_database_ca <<<"$rendered"
@@ -213,6 +225,74 @@ jobs:
           grep -q 'METRICS_SQUAD: "risk"' <<<"$rendered"
           # Every ExternalSecret: app.kubernetes.io/name = service account, keys under <env>/<service account>/.
           ./scripts/ci/check-externalsecrets.py ci "$sa" <<<"$rendered"
+          # Flyway runs only in the pre-install/pre-upgrade migration Job (decision 0002; cicd-templates 335a345
+          # labels): the app pods never reference the db-migration secret, the Job runs the app image with args
+          # [migrate] without an Istio sidecar, its ServiceAccount and the db-migration ExternalSecret are hooks
+          # before it and go away once the hooks succeed, and no Service, PDB, NetworkPolicy or Deployment selector
+          # matches its component=db-migration pods.
+          reject_render "externalSecret.migrationSecretName is required" --set externalSecret.migrationSecretName=
+          reject_render "externalSecret.migrationSecretName must be <env>/risk-decisioning-service/" \
+            --set externalSecret.migrationSecretName=ci/other-service/db-migration
+          ./scripts/ci/check-migration-job.py "$sa" <<<"$rendered"
+          helm template ci "$chart" -f "$chart/values-dev.yaml" $args | ./scripts/ci/check-migration-job.py "$sa"
+          grep -q "secretKey: DB_MIGRATION_USERNAME" <<<"$rendered"
+          grep -q "name: risk-decisioning-service-db-migration" <<<"$rendered"
+          # ...and the check catches each way back to the old shape.
+          mutated() {
+            python3 -c '
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+          one = lambda kind: [d for d in docs if d["kind"] == kind][0]
+          app = one("Deployment")["spec"]["template"]
+          job = one("Job")
+          migration_secret = [d for d in docs if d["kind"] == "ExternalSecret" and d["metadata"]["name"].endswith("-db-migration")][0]
+          exec(sys.argv[1])
+          yaml.safe_dump_all(docs, sys.stdout)
+          ' "$1" <<<"$rendered"
+          }
+          reject_mutation() {
+            if mutated "$2" | ./scripts/ci/check-migration-job.py "$sa" 2>/dev/null; then
+              echo "migration Job check accepted $1" >&2; exit 1
+            fi
+          }
+          reject_mutation "the migration secret in the app pods (envFrom)" \
+            'app["spec"]["containers"][0]["envFrom"].append({"secretRef": {"name": "risk-decisioning-service-db-migration"}})'
+          reject_mutation "the migration secret in the app pods (secretKeyRef)" \
+            'app["spec"]["containers"][0]["env"].append({"name": "DB_MIGRATION_PASSWORD", "valueFrom": {"secretKeyRef": {"name": "risk-decisioning-service-db-migration", "key": "DB_MIGRATION_PASSWORD"}}})'
+          reject_mutation "Job pods labelled component=service" \
+            'job["spec"]["template"]["metadata"]["labels"]["app.kubernetes.io/component"] = "service"'
+          reject_mutation "Job pods without the service account name label" \
+            'job["spec"]["template"]["metadata"]["labels"]["app.kubernetes.io/name"] = "flyway"'
+          reject_mutation "Job pods with an Istio sidecar" \
+            'job["spec"]["template"]["metadata"]["labels"]["sidecar.istio.io/inject"] = "true"'
+          reject_mutation "Job pods without the sidecar opt-out" \
+            'del job["spec"]["template"]["metadata"]["labels"]["sidecar.istio.io/inject"]'
+          reject_mutation "a Job that is not a pre-upgrade hook" \
+            'job["metadata"]["annotations"]["helm.sh/hook"] = "pre-install"'
+          reject_mutation "a Job without ttlSecondsAfterFinished" 'del job["spec"]["ttlSecondsAfterFinished"]'
+          reject_mutation "a Job without activeDeadlineSeconds" 'del job["spec"]["activeDeadlineSeconds"]'
+          reject_mutation "a Job without backoffLimit" 'del job["spec"]["backoffLimit"]'
+          reject_mutation "a Job with another DB_URL" \
+            '[e.update(value="jdbc:postgresql://other:5432/db") for e in job["spec"]["template"]["spec"]["containers"][0]["env"] if e["name"] == "DB_URL"]'
+          reject_mutation "a Job with a writable root filesystem" \
+            'job["spec"]["template"]["spec"]["containers"][0]["securityContext"]["readOnlyRootFilesystem"] = False'
+          reject_mutation "a Job that does not run the migrate mode" \
+            'job["spec"]["template"]["spec"]["containers"][0]["args"] = []'
+          reject_mutation "a Job on the app ServiceAccount (IAM role, API token)" \
+            'job["spec"]["template"]["spec"]["serviceAccountName"] = "risk-decisioning-service"'
+          reject_mutation "a migration ExternalSecret kept after the hooks succeed" \
+            'migration_secret["metadata"]["annotations"]["helm.sh/hook-delete-policy"] = "before-hook-creation"'
+          reject_mutation "a Service selecting by name only" \
+            'del one("Service")["spec"]["selector"]["app.kubernetes.io/component"]'
+          reject_mutation "a NetworkPolicy selecting the Job pods" \
+            'docs.append({"kind": "NetworkPolicy", "metadata": {"name": "np"}, "spec": {"podSelector": {"matchExpressions": [{"key": "app.kubernetes.io/component", "operator": "In", "values": ["db-migration"]}]}}})'
+          reject_mutation "a PDB selecting by name only" \
+            'del one("PodDisruptionBudget")["spec"]["selector"]["matchLabels"]["app.kubernetes.io/component"]'
+          # The database CA check covers the Job: a Job without the bundle or DB_SSL_ROOT_CERT fails it.
+          if mutated 'job["spec"]["template"]["spec"]["containers"][0]["env"] = [e for e in job["spec"]["template"]["spec"]["containers"][0]["env"] if e["name"] != "DB_SSL_ROOT_CERT"]' \
+              | check_database_ca 2>/dev/null; then
+            echo "database CA check accepted a migration Job without DB_SSL_ROOT_CERT" >&2; exit 1
+          fi
 
   terraform:
     name: deploy/terraform

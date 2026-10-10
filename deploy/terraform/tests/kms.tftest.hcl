@@ -98,6 +98,16 @@ run "secrets_and_database_keys_are_split" {
   }
 
   assert {
+    condition     = aws_secretsmanager_secret.migration_database.kms_key_id == "arn:aws:kms:me-central-1:111122223333:key/00000000-0000-4000-8000-00000000005e"
+    error_message = "the db-migration secret is encrypted with the secrets key"
+  }
+
+  assert {
+    condition     = aws_secretsmanager_secret.migration_database.name == "dev/risk-decisioning-service/db-migration"
+    error_message = "the db-migration secret lives under <env>/<service account>/, the only path the platform ESO role may read"
+  }
+
+  assert {
     condition     = aws_rds_cluster.database.master_user_secret_kms_key_id == "00000000-0000-4000-8000-0000000000db"
     error_message = "the RDS-managed master secret is encrypted with the database key"
   }
