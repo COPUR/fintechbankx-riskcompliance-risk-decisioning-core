@@ -93,7 +93,9 @@ jobs:
               --set "config.$key=optional:file:/tmp/override.yml"
           done
           reject_render "config.DB_URL must use sslmode=verify-full, exactly once" --set "config.DB_URL=$base?sslmode=require&applicationName=sslmode=verify-full"
-          # ... and the RDS CA bundle is mounted read-only, not optional, and exported as DB_SSL_ROOT_CERT.
+          # ... and the RDS CA bundle is mounted read-only, not optional, and exported as DB_SSL_ROOT_CERT,
+          # always: there is no switch to turn it off (this service always has a PostgreSQL database).
+          check_database_ca() {
           python3 -c '
           import sys, yaml
           dep = [d for d in yaml.safe_load_all(sys.stdin) if d and d.get("kind") == "Deployment"][0]["spec"]["template"]["spec"]
@@ -106,7 +108,15 @@ jobs:
           assert mounts == [{"name": "database-ca", "mountPath": "/etc/fintechbankx/rds-ca", "readOnly": True}], mounts
           env = {e["name"]: e.get("value") for e in c.get("env", [])}
           assert env.get("DB_SSL_ROOT_CERT") == "/etc/fintechbankx/rds-ca/global-bundle.pem", env
-          ' <<<"$rendered"
+          '
+          }
+          check_database_ca <<<"$rendered"
+          helm template ci "$chart" -f "$chart/values-dev.yaml" $args | check_database_ca
+          # A leftover databaseCa.enabled=false in an environment's values must not drop the mount.
+          helm template ci "$chart" $args --set databaseCa.enabled=false | check_database_ca
+          if helm show values "$chart" | python3 -c 'import sys, yaml; sys.exit("enabled" not in yaml.safe_load(sys.stdin)["databaseCa"])'; then
+            echo "values.yaml still offers databaseCa.enabled" >&2; exit 1
+          fi
           # Strict schema validation of every rendered manifest (CRDs from the datree catalog).
           # Schemas from pinned commits, not moving refs (same pins as compliance).
           k8s='https://raw.githubusercontent.com/yannh/kubernetes-json-schema/39a87cd29966bc0b3434e8cfbc2061782c8cb69a/{{.NormalizedKubernetesVersion}}-standalone{{.StrictSuffix}}/{{.ResourceKind}}{{.KindSuffix}}.json'
