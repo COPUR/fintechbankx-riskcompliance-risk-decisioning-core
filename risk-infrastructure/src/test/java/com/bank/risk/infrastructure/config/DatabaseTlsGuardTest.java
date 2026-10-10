@@ -79,6 +79,24 @@ class DatabaseTlsGuardTest {
         assertThatCode(() -> new DatabaseTlsGuard(environment).verify()).doesNotThrowAnyException();
     }
 
+    /**
+     * Flyway connects with spring.flyway.url when it is set, so a verified URL
+     * there that names another server or database would validate (or, in the
+     * migration Job, migrate) a schema the chart never checked: it must be the
+     * same URL as spring.datasource.url, like the Hikari jdbc-url.
+     */
+    @Test
+    void refusesAFlywayUrlThatDiffersFromTheDatasourceUrlEvenWhenVerified() {
+        MockEnvironment environment = environment(VALID)
+                .withProperty("spring.flyway.url",
+                        "jdbc:postgresql://elsewhere.example:5432/other?sslmode=verify-full&sslrootcert=" + BUNDLE);
+
+        assertThatThrownBy(() -> new DatabaseTlsGuard(environment).verify())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("spring.flyway.url must equal spring.datasource.url")
+                .message().doesNotContain("elsewhere.example");
+    }
+
     @Test
     void refusesAHikariJdbcUrlThatWouldReplaceTheDatasourceUrl() {
         MockEnvironment environment = environment(VALID)
