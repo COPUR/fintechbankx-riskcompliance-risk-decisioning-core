@@ -35,12 +35,7 @@ spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
       terminationGracePeriodSeconds: 45
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 10001
-        runAsGroup: 10001
-        fsGroup: 10001
-        seccompProfile:
-          type: RuntimeDefault
+        {{- include "risk.podSecurityContext" . | nindent 8 }}
       topologySpreadConstraints:
         - maxSkew: {{ .Values.topologySpread.maxSkew }}
           topologyKey: topology.kubernetes.io/zone
@@ -56,7 +51,7 @@ spec:
               {{- include "risk.selectorLabels" . | nindent 14 }}
       containers:
         - name: risk-decisioning-service
-          image: "{{ required "image.repository is required" .Values.image.repository }}:{{ required "image.tag is required" .Values.image.tag }}"
+          image: {{ include "risk.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
@@ -71,6 +66,8 @@ spec:
             - configMapRef:
                 name: {{ include "risk.name" . }}
             {{- if .Values.externalSecret.enabled }}
+            # The runtime role's credential only. The schema owner's (db-migration)
+            # is mounted by the migration Job alone; the service never migrates.
             - secretRef:
                 name: {{ include "risk.secretName" . }}
             {{- end }}
@@ -99,23 +96,12 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop: ["ALL"]
+            {{- include "risk.containerSecurityContext" . | nindent 12 }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp
-            - name: database-ca
-              mountPath: {{ .Values.databaseCa.mountPath }}
-              readOnly: true
+            {{- include "risk.databaseCaMount" . | nindent 12 }}
       volumes:
         - name: tmp
           emptyDir: {}
-        # Not optional: without the bundle the pod must not start.
-        - name: database-ca
-          configMap:
-            name: {{ .Values.databaseCa.configMapName }}
-            items:
-              - key: {{ .Values.databaseCa.key }}
-                path: {{ .Values.databaseCa.key }}
+        {{- include "risk.databaseCaVolume" . | nindent 8 }}

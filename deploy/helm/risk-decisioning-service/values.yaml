@@ -96,10 +96,39 @@ externalSecret:
   # Secrets Manager secret from deploy/terraform output app_db_secret_name:
   # <env>/<service account>/db-app, the only path the platform ESO role may read.
   remoteSecretName: ""
+  # Required. Secrets Manager secret <env>/risk-decisioning-service/db-migration
+  # (Terraform output migration_db_secret_name): the schema owner's
+  # {"username","password"}, read only by the migration Job below. The service
+  # pods never mount it; the chart refuses to render without it.
+  migrationSecretName: ""
   refreshInterval: 1h
 
 topologySpread:
   maxSkew: 1
+
+# Flyway migration Job (templates/migration-job.yaml, decision 0002): Helm
+# pre-install and pre-upgrade hook running this image with the argument
+# "migrate" as the schema owner, before any pod of the release starts or is
+# replaced. A failed Job fails the install or upgrade; give helm --timeout more
+# than activeDeadlineSeconds (runbook, "Database migrations (Flyway Job)"). Its
+# pods carry app.kubernetes.io/name=<serviceAccount.name>,
+# app.kubernetes.io/component=db-migration and sidecar.istio.io/inject "false"
+# (no proxy: Aurora egress is a NetworkPolicy on the name label, and an injected
+# proxy would keep the Job from completing).
+migrationJob:
+  # One retry: each migration is transactional in PostgreSQL, so a retry after a
+  # dropped connection starts from the last applied version.
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  # Finished Jobs (and their logs) are removed after a day, or replaced by the
+  # next install or upgrade.
+  ttlSecondsAfterFinished: 86400
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 768Mi
 
 # Mesh-wide STRICT mTLS, default deny, the ALLOW rules per caller principal and
 # the namespace network policies (mesh #11: allow-ingress-from-payments in

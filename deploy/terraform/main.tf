@@ -160,13 +160,25 @@ resource "aws_rds_cluster_instance" "database" {
   promotion_tier                        = count.index
 }
 
-# Application credential (role risk_decisioning_app, owner of schema
-# sc_rsk_decisioning). The DBA bootstrap in docs/migration creates the role
-# and writes {"username", "password"} here; Terraform never sees the value.
+# Application credential: runtime role risk_decisioning_app, which V11 grants
+# only SELECT, INSERT on the decisions of record and the outbox it needs. The
+# DBA bootstrap in docs/migration creates the role and writes
+# {"username", "password"} here; Terraform never sees the value.
 resource "aws_secretsmanager_secret" "app_database" {
   # <env>/<service-slug>/...: the only path the platform ESO role may read.
   name                    = "${var.environment}/${local.service_slug}/db-app"
   description             = "Application database credential for ${local.service_id}"
+  kms_key_id              = aws_kms_key.secrets.arn
+  recovery_window_in_days = 7
+}
+
+# Migration owner credential (role risk_decisioning_owner, owner of schema
+# sc_rsk_decisioning; Flyway only, in the chart's migration Job). Created and
+# filled by the DBA bootstrap like the app credential; Helm value
+# externalSecret.migrationSecretName.
+resource "aws_secretsmanager_secret" "migration_database" {
+  name                    = "${var.environment}/${local.service_slug}/db-migration"
+  description             = "Schema owner credential for ${local.service_id} migrations"
   kms_key_id              = aws_kms_key.secrets.arn
   recovery_window_in_days = 7
 }
