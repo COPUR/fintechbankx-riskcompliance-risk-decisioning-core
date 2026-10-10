@@ -89,6 +89,45 @@ class DatabaseTlsGuardTest {
                 .hasMessageContaining("spring.datasource.hikari.jdbc-url must use sslmode=verify-full");
     }
 
+    /**
+     * HikariCP's jdbc-url replaces spring.datasource.url entirely. A verified
+     * URL there that points somewhere else would bypass the chart's DB_URL
+     * check, so it must be the same URL, not merely a verified one.
+     */
+    @Test
+    void refusesAHikariJdbcUrlThatDiffersFromTheDatasourceUrlEvenWhenVerified() {
+        MockEnvironment environment = environment(VALID)
+                .withProperty("spring.datasource.hikari.jdbc-url",
+                        "jdbc:postgresql://elsewhere.example:5432/other?sslmode=verify-full&sslrootcert=" + BUNDLE);
+
+        assertThatThrownBy(() -> new DatabaseTlsGuard(environment).verify())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("spring.datasource.hikari.jdbc-url must equal spring.datasource.url");
+    }
+
+    @Test
+    void acceptsAHikariJdbcUrlEqualToTheDatasourceUrl() {
+        MockEnvironment environment = environment(VALID).withProperty("spring.datasource.hikari.jdbc-url", VALID);
+
+        assertThatCode(() -> new DatabaseTlsGuard(environment).verify()).doesNotThrowAnyException();
+    }
+
+    /** sslfactoryarg feeds a custom factory; the exact spelling PgJDBC applies is refused like sslfactory. */
+    @Test
+    void refusesAnSslFactoryArgument() {
+        assertThatThrownBy(() -> guard(VALID + "&sslfactoryarg=/tmp/decoy.pem").verify())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("spring.datasource.url must not set sslfactoryarg");
+    }
+
+    /** service= loads host, port and TLS settings from a pg_service.conf entry nobody checked. */
+    @Test
+    void refusesAServiceFileEntry() {
+        assertThatThrownBy(() -> guard(VALID + "&service=pgsvc").verify())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("spring.datasource.url must not set service");
+    }
+
     @Test
     void refusesSslDriverPropertiesOutsideTheUrl() {
         MockEnvironment environment = environment(VALID)
