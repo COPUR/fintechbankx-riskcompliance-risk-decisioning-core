@@ -93,6 +93,37 @@ jobs:
               --set "config.$key=optional:file:/tmp/override.yml"
           done
           reject_render "config.DB_URL must use sslmode=verify-full, exactly once" --set "config.DB_URL=$base?sslmode=require&applicationName=sslmode=verify-full"
+          # Keys are matched after normalisation (upper case, every non-alphanumeric character dropped), so a
+          # dash inside an element, a dot or an index spelling cannot slip a second URL or a config location past
+          # the check: Spring's relaxed binding reads all of them.
+          reject_render "config.spring.datasource.hikari.jdbc-url must not be set: config.DB_URL is the only database URL" \
+            --set "config.spring\.datasource\.hikari\.jdbc-url=$base?sslmode=disable"
+          reject_render "config.SPRING-DATASOURCE-URL must not be set: config.DB_URL is the only database URL" \
+            --set "config.SPRING-DATASOURCE-URL=$base?sslmode=disable"
+          reject_render "config.SPRING_CONFIG-IMPORT must not be set: it loads configuration that can override config.DB_URL" \
+            --set "config.SPRING_CONFIG-IMPORT=optional:file:/tmp/override.yml"
+          reject_render "config.spring.config.import[0] must not be set: it loads configuration that can override config.DB_URL" \
+            --set "config.spring\.config\.import\[0\]=optional:file:/tmp/override.yml"
+          # JVM option variables would load an agent or set system properties (spring.datasource.url included)
+          # before application.yml is read; the image fixes them.
+          for key in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS java-tool-options; do
+            reject_render "config.$key must not be set: JVM options are fixed by the image" \
+              --set "config.$key=-Dspring.datasource.url=$base?sslmode=disable"
+          done
+          # Log levels are not install-time values: LOGGING_LEVEL_ORG_POSTGRESQL=TRACE would write the wire
+          # protocol, with row data, to the pod log.
+          reject_render "config.LOGGING_LEVEL_ORG_POSTGRESQL must not be set: log levels are not install-time values" \
+            --set "config.LOGGING_LEVEL_ORG_POSTGRESQL=TRACE"
+          reject_render "config.logging.level.root must not be set: log levels are not install-time values" \
+            --set "config.logging\.level\.root=DEBUG"
+          # The chart has no extraEnv or env list, so the ConfigMap is the only route for a config key; make sure
+          # nobody adds one without routing it through the same check.
+          helm show values "$chart" | python3 -c '
+          import sys, yaml
+          values = yaml.safe_load(sys.stdin)
+          if any(k in values for k in ("extraEnv", "env", "extraEnvFrom")):
+              sys.exit("values.yaml offers an env list that bypasses the config-key check")
+          '
           # ... and the RDS CA bundle is mounted read-only, not optional, and exported as DB_SSL_ROOT_CERT,
           # always: there is no switch to turn it off (this service always has a PostgreSQL database).
           check_database_ca() {
