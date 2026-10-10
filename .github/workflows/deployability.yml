@@ -401,3 +401,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Rehearse monolith-to-service credit risk backfill and reconciliation
         run: scripts/migration/verify-backfill.sh
+      # db/bootstrap/roles.sql twice on a fresh database and once more after the migrations ran as the owner:
+      # idempotent, LOGIN roles without passwords, the owner owns the schema, the runtime role has only V11's grants.
+      - name: Rehearse the DBA role bootstrap
+        run: scripts/ci/check-role-bootstrap.sh
