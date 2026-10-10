@@ -25,8 +25,10 @@ import org.springframework.core.env.Environment;
  * sslfactoryarg, sslhostnameverifier or sslpasswordcallback that would replace
  * the check, and no service, which would load host, port and TLS settings from
  * a pg_service.conf entry nobody checked. HikariCP's jdbc-url replaces the
- * datasource URL entirely, so when set it must be the same URL, not merely a
- * verified one: config.DB_URL is the only checked URL.
+ * datasource URL entirely, and Flyway validates (the service) or migrates (the
+ * migration Job) the schema at spring.flyway.url, so each of them, when set,
+ * must be the same URL, not merely a verified one: config.DB_URL is the only
+ * checked URL.
  *
  * <p>Registered by {@link DatabaseTlsConfiguration} only when DB_SSL_ROOT_CERT is
  * set. Messages name the property, never the URL, which may carry a password.
@@ -37,7 +39,8 @@ public final class DatabaseTlsGuard implements BeanFactoryPostProcessor {
 
     private static final String DATASOURCE_URL = "spring.datasource.url";
     private static final String HIKARI_URL = "spring.datasource.hikari.jdbc-url";
-    private static final List<String> OPTIONAL_URLS = List.of("spring.flyway.url", HIKARI_URL);
+    private static final String FLYWAY_URL = "spring.flyway.url";
+    private static final List<String> OPTIONAL_URLS = List.of(FLYWAY_URL, HIKARI_URL);
     private static final String DRIVER_PROPERTIES = "spring.datasource.hikari.data-source-properties";
     private static final List<String> VERIFICATION_OVERRIDES = List.of(
             "sslfactory", "sslfactoryarg", "sslhostnameverifier", "sslpasswordcallback");
@@ -71,6 +74,12 @@ public final class DatabaseTlsGuard implements BeanFactoryPostProcessor {
         if (hikariUrl != null && !hikariUrl.equals(datasourceUrl)) {
             throw new IllegalStateException(HIKARI_URL + " must equal " + DATASOURCE_URL
                     + ": HikariCP connects with jdbc-url, and config.DB_URL is the only checked URL");
+        }
+        String flywayUrl = environment.getProperty(FLYWAY_URL);
+        if (flywayUrl != null && !flywayUrl.equals(datasourceUrl)) {
+            throw new IllegalStateException(FLYWAY_URL + " must equal " + DATASOURCE_URL
+                    + ": Flyway validates or migrates the schema at its own url, and config.DB_URL is the only"
+                    + " checked URL");
         }
         refuseSslDriverProperties();
     }
