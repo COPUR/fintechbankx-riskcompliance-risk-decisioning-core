@@ -6,4 +6,6 @@ POST /api/v1/risk/assess the request property 'highRiskCountry' became required
 # Accepted 2026-10-08 with regression finding LP-05 (pre-release spec): rsk-policy-v3 restores the monolith's refusal of
 # a MOBILE_PAYMENT above 5000 USD, which needs the payment type. It is required and fails closed like the other risk
 # facts; svc-pay-initiation-settlement must send its PaymentType value (relayed to the payments owner).
+# Release order: payments 8a1a3ea, which sends paymentType, deploys before or with this risk head; an older payments
+# build gets a 400 for every assessment.
 POST /api/v1/risk/assess added the new required request property 'paymentType'
