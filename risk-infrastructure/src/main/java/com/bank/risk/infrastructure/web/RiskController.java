@@ -1,33 +1,46 @@
 package com.bank.risk.infrastructure.web;
 
-import com.bank.risk.application.RiskAssessmentService;
-import com.bank.risk.application.dto.EvaluateRiskRequest;
-import com.bank.risk.application.dto.RiskAssessmentResponse;
+import com.bank.risk.infrastructure.web.dto.EvaluateRiskRequest;
+import com.bank.risk.infrastructure.web.dto.RiskAssessmentResponse;
+import com.bank.risk.domain.port.in.RiskAssessmentUseCase;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+/**
+ * Transaction risk decisions. Called by payment services with a SERVICE-role
+ * client-credentials token whose client (azp) is on SERVICE_CALLERS, and read
+ * by bank staff.
+ */
 @RestController
 @RequestMapping("/api/v1/risk")
 public class RiskController {
-    private final RiskAssessmentService service;
+    static final String CALLERS = "hasAnyRole('BANKER', 'ADMIN') or (hasRole('SERVICE') and @serviceCallers.allowed(authentication))";
 
-    public RiskController(RiskAssessmentService service) {
+    private final RiskAssessmentUseCase service;
+
+    /** Receives the transactional use case from RiskConfiguration, never the bare service. */
+    public RiskController(RiskAssessmentUseCase service) {
         this.service = service;
     }
 
     @PostMapping("/assess")
-    public ResponseEntity<RiskAssessmentResponse> assess(@Valid @RequestBody EvaluateRiskRequest request) {
+    @PreAuthorize(CALLERS)
+    public ResponseEntity<RiskAssessmentResponse> assess(@Valid @RequestBody EvaluateRiskRequest request,
+                                                         Authentication caller) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(RiskAssessmentResponse.from(service.assess(request.toCommand())));
+                .body(RiskAssessmentResponse.from(service.assess(request.toCommand(CallerAttestation.attestedBy(caller)))));
     }
 
     @GetMapping("/assessments/{transactionId}")
-    public ResponseEntity<RiskAssessmentResponse> find(@PathVariable String transactionId) {
+    @PreAuthorize(CALLERS)
+    public ResponseEntity<?> find(@PathVariable String transactionId) {
         return service.findByTransactionId(transactionId)
-                .map(RiskAssessmentResponse::from)
-                .map(ResponseEntity::ok)
-                .orElseGet(() -> ResponseEntity.notFound().build());
+                .<ResponseEntity<?>>map(assessment -> ResponseEntity.ok(RiskAssessmentResponse.from(assessment)))
+                .orElseGet(() -> ApiExceptionHandler.error(HttpStatus.NOT_FOUND, "ASSESSMENT_NOT_FOUND",
+                        "No risk assessment for this transaction"));
     }
 }

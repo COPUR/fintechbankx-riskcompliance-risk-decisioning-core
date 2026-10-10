@@ -1,0 +1,136 @@
+# Defaults are production-shaped (multi-replica, spread across zones).
+# Override per environment with values-<env>.yaml.
+
+image:
+  repository: ""   # e.g. <account>.dkr.ecr.<region>.amazonaws.com/fintechbankx/risk-decisioning-service
+  tag: ""          # immutable tag (git SHA); never "latest"
+  pullPolicy: IfNotPresent
+
+replicaCount: 3
+
+serviceAccount:
+  name: risk-decisioning-service
+  # IAM role from deploy/terraform output workload_role_arn (IRSA).
+  roleArn: ""
+
+podLabels:
+  app.kubernetes.io/part-of: fintechbankx-risk
+  fintechbankx.io/service-id: svc-rsk-decisioning
+  sidecar.istio.io/inject: "true"
+
+service:
+  port: 8080
+  managementPort: 8081
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 768Mi
+  limits:
+    memory: 1Gi
+
+# CPU only: the JVM keeps committed heap, so a memory target would pin the
+# deployment at maxReplicas and block scale-down.
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 12
+  targetCPUUtilizationPercentage: 65
+
+podDisruptionBudget:
+  minAvailable: 2
+
+# Amazon RDS CA bundle for Aurora TLS with certificate and host verification
+# (cicd-templates 4f0f266). The platform's trust-manager Bundle publishes
+# ConfigMap rds-ca-bundle in every service namespace. The volume is not
+# optional: a missing bundle keeps the pod from starting instead of letting it
+# connect without verification. The path is also exported as DB_SSL_ROOT_CERT,
+# which turns on the service's DatabaseTlsGuard. There is no switch to turn it
+# off: this service always has a PostgreSQL database.
+databaseCa:
+  configMapName: rds-ca-bundle
+  key: global-bundle.pem
+  mountPath: /etc/fintechbankx/rds-ca
+
+# Non-secret runtime settings, rendered into a ConfigMap.
+config:
+  # Terraform output jdbc_url: jdbc:postgresql://<aurora-writer-endpoint>:5432/db_rsk_decisioning_<env>
+  #   ?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
+  # The render fails unless sslmode=verify-full and that sslrootcert each appear exactly once
+  # and no sslfactory, sslhostnameverifier or sslpasswordcallback is set; no other config key
+  # may carry a database URL (SPRING_DATASOURCE_*URL, SPRING_FLYWAY_URL, SPRING_APPLICATION_JSON), none may set
+  # SPRING_CONFIG_IMPORT, SPRING_CONFIG_ADDITIONAL_LOCATION or SPRING_CONFIG_LOCATION, none may set JVM options
+  # (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, _JAVA_OPTIONS, JAVA_OPTS) and none may set a LOGGING_LEVEL_*. Keys are
+  # matched in every spelling (case, dash, dot, underscore, index) Spring's relaxed binding accepts.
+  DB_URL: ""
+  DB_USERNAME: risk_decisioning_app
+  DB_POOL_MAX: "10"
+  KAFKA_BOOTSTRAP_SERVERS: ""     # MSK bootstrap brokers (IAM listener, port 9098)
+  # Amazon MSK with IAM client auth through the pod's IRSA role (profile kafka-msk;
+  # kafka-strimzi on non-AWS clusters).
+  KAFKA_SECURITY_PROTOCOL: SASL_SSL
+  SPRING_PROFILES_ACTIVE: kafka-msk
+  OIDC_ISSUER_URI: ""
+  OIDC_JWK_SET_URI: ""
+  # Outbox relay to the aggregate topic evt.rsk.risk.v1 (ADR-019; the eventType
+  # header names the event). Off until the mesh contract lists msk for
+  # risk-decisioning-service (allow-egress-msk generated for namespace risk) and
+  # the topic exists; until then events stay in sc_rsk_decisioning.outbox_event.
+  # Turn on with --set config.OUTBOX_RELAY_ENABLED=true (runbook step 4).
+  OUTBOX_RELAY_ENABLED: "false"
+  OIDC_AUDIENCE: svc-rsk-decisioning    # tokens must name this service id in aud
+  # Clients (azp) that may ask for decisions with the SERVICE role. DPoP is not
+  # required for internal client-credentials calls (mesh mTLS, platform contract).
+  SERVICE_CALLERS: svc-pay-initiation-settlement
+
+# Owning squad, the squad tag on every metric (platform alert routing).
+metrics:
+  squad: risk
+
+# Database credential, synced from AWS Secrets Manager by External Secrets Operator.
+externalSecret:
+  enabled: true
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: aws-secrets-manager
+  # Secrets Manager secret from deploy/terraform output app_db_secret_name:
+  # <env>/<service account>/db-app, the only path the platform ESO role may read.
+  remoteSecretName: ""
+  # Required. Secrets Manager secret <env>/risk-decisioning-service/db-migration
+  # (Terraform output migration_db_secret_name): the schema owner's
+  # {"username","password"}, read only by the migration Job below. The service
+  # pods never mount it; the chart refuses to render without it.
+  migrationSecretName: ""
+  refreshInterval: 1h
+
+topologySpread:
+  maxSkew: 1
+
+# Flyway migration Job (templates/migration-job.yaml, decision 0002): Helm
+# pre-install and pre-upgrade hook running this image with the argument
+# "migrate" as the schema owner, before any pod of the release starts or is
+# replaced. A failed Job fails the install or upgrade; give helm --timeout more
+# than activeDeadlineSeconds (runbook, "Database migrations (Flyway Job)"). Its
+# pods carry app.kubernetes.io/name=<serviceAccount.name>,
+# app.kubernetes.io/component=db-migration and sidecar.istio.io/inject "false"
+# (no proxy: Aurora egress is a NetworkPolicy on the name label, and an injected
+# proxy would keep the Job from completing).
+migrationJob:
+  # One retry: each migration is transactional in PostgreSQL, so a retry after a
+  # dropped connection starts from the last applied version.
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  # Finished Jobs (and their logs) are removed after a day, or replaced by the
+  # next install or upgrade.
+  ttlSecondsAfterFinished: 86400
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 768Mi
+
+# Mesh-wide STRICT mTLS, default deny, the ALLOW rules per caller principal and
+# the namespace network policies (mesh #11: allow-ingress-from-payments in
+# namespace risk) are owned by fintechbankx-platform-mesh-security-service-mesh;
+# this chart ships no PeerAuthentication, AuthorizationPolicy or NetworkPolicy.

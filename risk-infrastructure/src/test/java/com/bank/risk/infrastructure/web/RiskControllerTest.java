@@ -1,11 +1,19 @@
 package com.bank.risk.infrastructure.web;
 
-import com.bank.risk.application.RiskAssessmentService;
+import com.bank.risk.domain.PaymentType;
 import com.bank.risk.domain.RiskAssessment;
 import com.bank.risk.domain.RiskDecision;
-import com.bank.risk.domain.command.RiskEvaluationCommand;
+import com.bank.risk.domain.TransactionAlreadyAssessedException;
+import com.bank.risk.domain.port.in.RiskEvaluationCommand;
+import com.bank.risk.domain.port.in.RiskAssessmentUseCase;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.mockito.ArgumentCaptor;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -24,24 +32,65 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class RiskControllerTest {
 
-    private RiskAssessmentService service;
+    private RiskAssessmentUseCase service;
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
-        service = mock(RiskAssessmentService.class);
-        mockMvc = MockMvcBuilders.standaloneSetup(new RiskController(service)).build();
+        service = mock(RiskAssessmentUseCase.class);
+        mockMvc = MockMvcBuilders.standaloneSetup(new RiskController(service))
+                .setControllerAdvice(new ApiExceptionHandler())
+                .defaultRequest(get("/").principal(serviceToken()))
+                .build();
+    }
+
+    private static JwtAuthenticationToken serviceToken() {
+        return token("service-account-payments", "svc-pay-initiation-settlement", "ROLE_SERVICE");
+    }
+
+    private static JwtAuthenticationToken token(String subject, String azp, String role) {
+        Jwt.Builder jwt = Jwt.withTokenValue("t").header("alg", "none").subject(subject);
+        if (azp != null) {
+            jwt.claim("azp", azp);
+        }
+        return new JwtAuthenticationToken(jwt.build(), List.of(new SimpleGrantedAuthority(role)), subject);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource(delimiter = '|', value = {
+        "service client is attested by its azp | service-account-payments | svc-pay-initiation-settlement | ROLE_SERVICE | svc-pay-initiation-settlement",
+        "staff member is attested by subject   | staff-42                 | fintechbankx-web              | ROLE_BANKER  | staff-42"
+    })
+    void theCallerWhoStatedTheRiskFactsIsPassedInTheCommandAndReturned(String name, String subject, String azp,
+                                                                     String role, String attestedBy) throws Exception {
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-7", new BigDecimal("10"), "USD",
+                false, 0, attestedBy, PaymentType.TRANSFER), 0, RiskDecision.ALLOW, List.of(), "rsk-policy-v2");
+        when(service.assess(any(RiskEvaluationCommand.class))).thenReturn(assessment);
+
+        mockMvc.perform(post("/api/v1/risk/assess")
+                        .principal(token(subject, azp, role))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {"transactionId":"TX-7","amount":10,"currency":"USD","highRiskCountry":false,"velocityScore":0,"paymentType":"TRANSFER"}
+                        """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.attestationSource").value("CALLER_ATTESTED"))
+                .andExpect(jsonPath("$.attestedBy").value(attestedBy));
+
+        ArgumentCaptor<RiskEvaluationCommand> command = ArgumentCaptor.forClass(RiskEvaluationCommand.class);
+        org.mockito.Mockito.verify(service).assess(command.capture());
+        org.assertj.core.api.Assertions.assertThat(command.getValue().attestedBy()).isEqualTo(attestedBy);
     }
 
     @Test
     void shouldAssessRisk() throws Exception {
-        RiskAssessment assessment = RiskAssessment.create("TX-1", new BigDecimal("200"), "AED", 60, RiskDecision.REVIEW, List.of("HIGH_AMOUNT"));
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("200"), "AED", false, 0, "svc-pay-initiation-settlement", PaymentType.TRANSFER), 60, RiskDecision.REVIEW, List.of("HIGH_AMOUNT"), "rsk-policy-v2");
         when(service.assess(any(RiskEvaluationCommand.class))).thenReturn(assessment);
 
         mockMvc.perform(post("/api/v1/risk/assess")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                            {"transactionId":"TX-1","amount":200,"currency":"AED","highRiskCountry":false,"velocityScore":45}
+                            {"transactionId":"TX-1","amount":200,"currency":"AED","highRiskCountry":false,"velocityScore":45,"paymentType":"TRANSFER"}
                         """))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.transactionId").value("TX-1"))
@@ -50,7 +99,7 @@ class RiskControllerTest {
 
     @Test
     void shouldReturnAssessmentByTransactionId() throws Exception {
-        RiskAssessment assessment = RiskAssessment.create("TX-2", new BigDecimal("100"), "AED", 10, RiskDecision.ALLOW, List.of("COMPLIANT"));
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-2", new BigDecimal("100"), "AED", false, 0, "svc-pay-initiation-settlement", PaymentType.TRANSFER), 10, RiskDecision.ALLOW, List.of("COMPLIANT"), "rsk-policy-v2");
         when(service.findByTransactionId("TX-2")).thenReturn(Optional.of(assessment));
         when(service.findByTransactionId("TX-404")).thenReturn(Optional.empty());
 
@@ -59,6 +108,79 @@ class RiskControllerTest {
                 .andExpect(jsonPath("$.transactionId").value("TX-2"));
 
         mockMvc.perform(get("/api/v1/risk/assessments/TX-404"))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("ASSESSMENT_NOT_FOUND"));
+    }
+
+    @Test
+    void reusedTransactionIdWithADifferentAmountIsAConflict() throws Exception {
+        when(service.assess(any(RiskEvaluationCommand.class)))
+                .thenThrow(new TransactionAlreadyAssessedException("TX-3"));
+
+        mockMvc.perform(post("/api/v1/risk/assess")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {"transactionId":"TX-3","amount":201,"currency":"AED","highRiskCountry":false,"velocityScore":0,"paymentType":"TRANSFER"}
+                        """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("TRANSACTION_ALREADY_ASSESSED"));
+    }
+
+    @Test
+    void invalidRequestsAreA400WithAStableCode() throws Exception {
+        mockMvc.perform(post("/api/v1/risk/assess")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {"transactionId":"TX-4","amount":-1,"currency":"AED","highRiskCountry":false,"velocityScore":0,"paymentType":"TRANSFER"}
+                        """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.message").value("amount must be positive"));
+
+        mockMvc.perform(post("/api/v1/risk/assess")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{not json"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Malformed request body"));
+    }
+
+    /** Caller-supplied risk facts fail closed: a missing fact is a 400, never the low-risk false or 0. */
+    @ParameterizedTest(name = "{0}")
+    @CsvSource(delimiter = '|', value = {
+        "highRiskCountry omitted  | {\"transactionId\":\"TX-6\",\"amount\":9000.00,\"currency\":\"USD\",\"velocityScore\":0,\"paymentType\":\"TRANSFER\"}                          | highRiskCountry",
+        "highRiskCountry null     | {\"transactionId\":\"TX-6\",\"amount\":9000.00,\"currency\":\"USD\",\"highRiskCountry\":null,\"velocityScore\":0,\"paymentType\":\"TRANSFER\"}  | highRiskCountry",
+        "velocityScore omitted    | {\"transactionId\":\"TX-6\",\"amount\":9000.00,\"currency\":\"USD\",\"highRiskCountry\":false,\"paymentType\":\"TRANSFER\"}                       | velocityScore",
+        "velocityScore null       | {\"transactionId\":\"TX-6\",\"amount\":9000.00,\"currency\":\"USD\",\"highRiskCountry\":false,\"velocityScore\":null,\"paymentType\":\"TRANSFER\"} | velocityScore",
+        "paymentType omitted      | {\"transactionId\":\"TX-6\",\"amount\":9000.00,\"currency\":\"USD\",\"highRiskCountry\":false,\"velocityScore\":0}                          | paymentType",
+        "paymentType null         | {\"transactionId\":\"TX-6\",\"amount\":9000.00,\"currency\":\"USD\",\"highRiskCountry\":false,\"velocityScore\":0,\"paymentType\":null}  | paymentType",
+        "paymentType unknown      | {\"transactionId\":\"TX-6\",\"amount\":9000.00,\"currency\":\"USD\",\"highRiskCountry\":false,\"velocityScore\":0,\"paymentType\":\"CASH\"} | paymentType"
+    })
+    void anOmittedOrNullRiskFactIsA400NotALowRiskDefault(String name, String body, String field) throws Exception {
+        mockMvc.perform(post("/api/v1/risk/assess")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString(field)));
+        org.mockito.Mockito.verifyNoInteractions(service);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource(delimiter = '|', value = {
+        "lower-case currency      | {\"transactionId\":\"TX-5\",\"amount\":10.00,\"currency\":\"aed\",\"highRiskCountry\":false,\"velocityScore\":0,\"paymentType\":\"TRANSFER\"}   | currency",
+        "unknown currency         | {\"transactionId\":\"TX-5\",\"amount\":10.00,\"currency\":\"ABC\",\"highRiskCountry\":false,\"velocityScore\":0,\"paymentType\":\"TRANSFER\"}   | currency",
+        "129-character id         | {\"transactionId\":\"ID129\",\"amount\":10.00,\"currency\":\"AED\",\"highRiskCountry\":false,\"velocityScore\":0,\"paymentType\":\"TRANSFER\"}  | transactionId",
+        "16 integer digits        | {\"transactionId\":\"TX-5\",\"amount\":1e16,\"currency\":\"AED\",\"highRiskCountry\":false,\"velocityScore\":0,\"paymentType\":\"TRANSFER\"}    | amount",
+        "five decimals            | {\"transactionId\":\"TX-5\",\"amount\":1.23456,\"currency\":\"AED\",\"highRiskCountry\":false,\"velocityScore\":0,\"paymentType\":\"TRANSFER\"} | amount",
+        "velocity out of range    | {\"transactionId\":\"TX-5\",\"amount\":10.00,\"currency\":\"AED\",\"highRiskCountry\":false,\"velocityScore\":-1,\"paymentType\":\"TRANSFER\"}  | velocityScore"
+    })
+    void inputsTheDecisionOfRecordCannotHoldAreA400(String name, String body, String field) throws Exception {
+        mockMvc.perform(post("/api/v1/risk/assess")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body.replace("ID129", "P".repeat(129))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString(field)));
+        org.mockito.Mockito.verifyNoInteractions(service);
     }
 }

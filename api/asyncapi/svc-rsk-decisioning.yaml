@@ -1,0 +1,183 @@
+# AsyncAPI contract for svc-rsk-decisioning.
+# Status: Proposed. This provider repository owns the contract; the asyncapi catalog mirrors it.
+# Naming: docs/NAMING_CONVENTION_DDD_EDA_BUSINESS_CONTEXT.md
+# Validate: npx -y @asyncapi/cli@2.13.0 validate api/asyncapi/svc-rsk-decisioning.yaml
+asyncapi: 3.0.0
+id: urn:fintechbankx:asyncapi:svc-rsk-decisioning
+info:
+  title: svc-rsk-decisioning events
+  version: 1.0.0
+  description: |-
+    Event contract for svc-rsk-decisioning (repository fintechbankx-riskcompliance-risk-decisioning-core, canonical name fintechbankx-risk-decisioning-service).
+
+    Status: Proposed. Owner: Risk and Compliance Decisioning Squad, Lending and Money Movement Tribe. Event namespace: `evt.rsk.risk`.
+
+    Implementation status: the service writes RiskAssessment.Assessed to its transactional outbox (sc_rsk_decisioning.outbox_event) in the same transaction as the decision of record, and a relay publishes it in insertion order (at least once; consumers de-duplicate on eventId). Per ADR-021 decision 4 the relay parks only a row with a payload error (RecordTooLarge, Serialization, InvalidTopic) and continues; any other failure stops publishing, without skipping the row, until it succeeds after backoff. A retried assessment of the same transaction returns the stored decision and publishes nothing.
+
+    Every message uses the standard envelope (common/event-envelope.yaml). All events go to one topic per aggregate, `evt.rsk.risk.v1`, with the record key = aggregateId (the assessment id) and the eventType, eventId and correlationId record headers, plus traceparent when the request was traced (ADR-019). Consumers route on the eventType header and skip event types they do not handle. The topic uses cleanup.policy=delete. Adding an optional field or a new event type is a minor change; a removal, rename or type change in one event is a new event major (eventType ...v2) published on the same topic alongside the old one until consumers move. The topic major changes only when the record key, the partition count or the cleanup policy changes.
+  tags:
+  - name: risk
+  - name: evt.rsk.risk
+  x-service-id: svc-rsk-decisioning
+  x-event-namespace: evt.rsk.risk
+  x-owning-squad: Risk and Compliance Decisioning Squad
+defaultContentType: application/json
+servers:
+  msk:
+    host: '{bootstrapServers}'
+    protocol: kafka-secure
+    description: Amazon MSK cluster of the FinTechBankX event platform (svc-evt-streaming) on AWS. TLS in transit,
+      SASL_SSL with mechanism AWS_MSK_IAM using the service's IRSA role (ADR-024, platform contract 2026-10-08).
+    variables:
+      bootstrapServers:
+        description: MSK IAM bootstrap brokers (port 9098), injected per environment by the platform.
+    security:
+    - $ref: '#/components/securitySchemes/mskIam'
+  local:
+    host: '{bootstrapServers}'
+    protocol: kafka-secure
+    description: Strimzi cluster in namespace kafka, for local and non-AWS environments only. Mutual TLS with
+      Strimzi-issued client certificates.
+    variables:
+      bootstrapServers:
+        description: Strimzi TLS bootstrap service, injected per environment.
+    security:
+    - $ref: '#/components/securitySchemes/mtls'
+channels:
+  risk:
+    address: evt.rsk.risk.v1
+    title: evt.rsk.risk.v1
+    description: 'Every event of the RiskAssessment aggregate, keyed by aggregateId so that the events of one
+      aggregate instance stay in order in one partition (ADR-019, one topic per aggregate). The eventType record
+      header names the event: Risk.RiskAssessment.Assessed.v1. Consumers skip event types they do not handle.'
+    messages:
+      RiskAssessed:
+        $ref: '#/components/messages/RiskAssessed'
+    bindings:
+      kafka:
+        topic: evt.rsk.risk.v1
+        partitions: 3
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy:
+          - delete
+          retention.ms: 604800000
+          max.message.bytes: 1048576
+        bindingVersion: 0.5.0
+operations:
+  publishRiskAssessed:
+    action: send
+    title: Publish Risk.RiskAssessment.Assessed.v1
+    summary: svc-rsk-decisioning publishes Risk.RiskAssessment.Assessed.v1 through its transactional outbox.
+    channel:
+      $ref: '#/channels/risk'
+    messages:
+    - $ref: '#/channels/risk/messages/RiskAssessed'
+components:
+  schemas:
+    EventEnvelope:
+      $ref: ./common/event-envelope.yaml#/EventEnvelope
+    EventHeaders:
+      $ref: ./common/event-envelope.yaml#/EventHeaders
+    MonetaryAmount:
+      $ref: ./common/event-envelope.yaml#/MonetaryAmount
+    RiskAssessedData:
+      type: object
+      description: Payload of Risk.RiskAssessment.Assessed.v1. Ids, the decision and reason codes only; no
+        customer or counterparty data.
+      properties:
+        assessmentId:
+          type: string
+          pattern: '^RISK-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          description: Assessment id (same as aggregateId), RISK- followed by a UUID. The same id the
+            risk-context API returns as assessmentId.
+        transactionId:
+          type: string
+          minLength: 1
+          description: Id of the assessed transaction, as given by the caller.
+        decision:
+          type: string
+          enum:
+          - ALLOW
+          - REVIEW
+          - BLOCK
+          description: Decision of record. REVIEW puts the transaction in the manual review queue.
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Risk score the policy produced.
+        amount:
+          allOf:
+          - $ref: '#/components/schemas/MonetaryAmount'
+          description: Assessed amount.
+        reasons:
+          type: array
+          description: 'Policy reason codes, for example HIGH_AMOUNT, VERY_HIGH_AMOUNT, HIGH_RISK_COUNTRY,
+            HIGH_VELOCITY, MEDIUM_VELOCITY, UNSUPPORTED_CURRENCY (no amount thresholds for the currency, so
+            the amount was not scored and the decision is at least REVIEW), SUSPICIOUS_ROUND_AMOUNT and
+            SUSPICIOUS_MOBILE_AMOUNT (suspicious patterns, decision BLOCK). Consumers must accept codes they do not know.'
+          items:
+            type: string
+            pattern: '^[A-Z][A-Z0-9_]*$'
+        assessedAt:
+          type: string
+          format: date-time
+          description: When the decision was made (UTC).
+        attestationSource:
+          type: string
+          enum:
+          - CALLER_ATTESTED
+          description: 'Optional. Who vouches for the risk facts the decision rests on.
+            CALLER_ATTESTED: highRiskCountry and velocityScore were stated by the caller, not verified by
+            risk (ADR 0001). The caller''s id is available from the risk API only. Consumers must accept
+            values they do not know.'
+      required:
+      - assessmentId
+      - transactionId
+      - decision
+      - score
+      - amount
+      - reasons
+      - assessedAt
+  messages:
+    RiskAssessed:
+      name: RiskAssessed
+      title: Risk.RiskAssessment.Assessed.v1
+      summary: A transaction received its risk decision of record.
+      contentType: application/json
+      headers:
+        allOf:
+        - $ref: '#/components/schemas/EventHeaders'
+        - type: object
+          properties:
+            eventType:
+              const: Risk.RiskAssessment.Assessed.v1
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: Risk.RiskAssessment.Assessed.v1
+            producer:
+              const: svc-rsk-decisioning
+            data:
+              $ref: '#/components/schemas/RiskAssessedData'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: aggregateId (assessmentId).
+          bindingVersion: 0.5.0
+      x-source-class: com.bank.risk.domain.RiskAssessedEvent
+  securitySchemes:
+    mskIam:
+      type: userPassword
+      description: SASL_SSL with SASL mechanism AWS_MSK_IAM. There is no user or password; the client signs with the
+        AWS credentials of its IRSA role, and a topic-scoped IAM policy (terraform module msk-client-access) grants
+        produce or consume rights. AsyncAPI has no IAM scheme type, so userPassword stands for the SASL family.
+      x-sasl-mechanism: AWS_MSK_IAM
+    mtls:
+      type: X509
+      description: Mutual TLS with Strimzi-issued client certificates (local and non-AWS clusters only).

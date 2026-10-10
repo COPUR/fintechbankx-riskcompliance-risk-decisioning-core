@@ -1,0 +1,56 @@
+// =================================================================
+// RISK BOOTSTRAP MODULE
+// =================================================================
+// Runnable Spring Boot service (svc-rsk-decisioning). Wires the domain,
+// application and infrastructure modules; holds runtime configuration only.
+// =================================================================
+
+apply plugin: 'org.springframework.boot'
+// Execution data feeds risk-infrastructure's coverage gate.
+apply plugin: 'jacoco'
+jacoco {
+    toolVersion = '0.8.14'
+}
+
+description = 'Risk Bootstrap - deployable svc-rsk-decisioning service'
+
+dependencies {
+    implementation project(':risk-infrastructure')
+    implementation project(':risk-application')
+    implementation project(':risk-domain')
+
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
+    implementation 'org.springframework.kafka:spring-kafka'
+    runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+    // Amazon MSK IAM client authentication, used by the kafka-msk profile (application.yml)
+    runtimeOnly 'software.amazon.msk:aws-msk-iam-auth:2.2.0'
+    runtimeOnly 'org.postgresql:postgresql'
+    // FlywayStartupConfiguration chooses validate or migrate; DatabaseMigration is the Job's entry point.
+    implementation 'org.flywaydb:flyway-core'
+    runtimeOnly 'org.flywaydb:flyway-database-postgresql'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    // RiskOutboxIT runs the migrations step by step (V10 rewrite of pending outbox rows).
+    testImplementation 'org.flywaydb:flyway-core'
+    testImplementation 'org.springframework.security:spring-security-test'
+    testImplementation 'org.testcontainers:junit-jupiter'
+    testImplementation 'org.testcontainers:postgresql'
+    testImplementation libs.archunit.junit5
+}
+
+springBoot {
+    mainClass = 'com.bank.risk.RiskDecisioningApplication'
+    buildInfo()
+}
+
+bootJar {
+    archiveFileName = 'risk-decisioning-service.jar'
+}
+
+jar {
+    enabled = false
+}

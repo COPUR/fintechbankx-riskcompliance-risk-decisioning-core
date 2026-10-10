@@ -10,9 +10,17 @@ paths:
     post:
       summary: Assess transaction risk
       operationId: assessRisk
+      description: |-
+        Decides once per transactionId. transactionId is unique across all
+        callers of this service, so callers must namespace their ids (for
+        example PAY-<payment id>). A retry that repeats every input (amount by
+        value, currency, highRiskCountry, velocityScore, paymentType) returns the stored
+        decision; the same transactionId with any different input is a 409
+        TRANSACTION_ALREADY_ASSESSED. A 409 DUPLICATE_REQUEST means a
+        concurrent first request for the same transactionId won; retry to get
+        its decision.
       security:
         - bearerAuth: []
-          dpopAuth: []
       parameters:
         - $ref: '#/components/parameters/Authorization'
         - $ref: '#/components/parameters/DPoP'
@@ -30,13 +38,45 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RiskAssessmentResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: |-
+            TRANSACTION_ALREADY_ASSESSED: the transactionId was already assessed
+            with different inputs. DUPLICATE_REQUEST: a concurrent request for
+            the same transactionId won; retrying returns its decision.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error (not retryable as a duplicate)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/v1/risk/assessments/{transactionId}:
     get:
       summary: Find risk assessment by transaction id
       operationId: findRiskAssessment
       security:
         - bearerAuth: []
-          dpopAuth: []
       parameters:
         - $ref: '#/components/parameters/Authorization'
         - $ref: '#/components/parameters/DPoP'
@@ -49,8 +89,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RiskAssessmentResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '404':
-          description: Not found
+          description: No assessment for this transaction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
 components:
   securitySchemes:
@@ -58,10 +114,6 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-    dpopAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: DPoP
   parameters:
     Authorization:
       name: Authorization
@@ -72,7 +124,14 @@ components:
     DPoP:
       name: DPoP
       in: header
-      required: true
+      required: false
+      description: |-
+        DPoP proof (RFC 9449). Optional here: per the platform contract
+        (addendum 2026-10-08) DPoP binding applies only to open-finance TPP
+        clients. This service is called with internal client-credentials and
+        staff tokens, which are not DPoP-bound, so it does not verify DPoP; a
+        DPoP header sent anyway is ignored. Audience and the azp allow-list are
+        enforced by the service.
       schema:
         type: string
     InteractionId:
@@ -90,21 +149,51 @@ components:
   schemas:
     RiskAssessmentRequest:
       type: object
-      required: [transactionId, amount, currency, velocityScore]
+      required: [transactionId, amount, currency, highRiskCountry, velocityScore, paymentType]
       properties:
         transactionId:
           type: string
+          description: |-
+            Caller's id of the transaction, unique across all callers (namespace
+            it, for example PAY-<payment id>). At most 128 characters.
+          maxLength: 128
         amount:
           type: number
           format: double
+          description: |-
+            Positive, at most 15 integer digits and 4 decimals. More decimals are
+            refused with a 400, never rounded, so a retry matches exactly.
+          minimum: 0
+          exclusiveMinimum: true
         currency:
           type: string
+          description: |-
+            Upper-case ISO 4217 code, for example USD. Every code is accepted;
+            amount thresholds exist for USD only, so other currencies get at
+            least REVIEW with reason UNSUPPORTED_CURRENCY.
         highRiskCountry:
           type: boolean
+          description: |-
+            Caller's statement that the counterparty country is high risk.
+            Required: an omitted or null value is a 400 INVALID_REQUEST, never
+            taken as false. Stored with the decision as caller-attested.
         velocityScore:
           type: integer
           minimum: 0
           maximum: 100
+          description: |-
+            Caller's velocity score, 0 to 100. Required: an omitted or null
+            value is a 400 INVALID_REQUEST, never taken as 0. Stored with the
+            decision as caller-attested.
+        paymentType:
+          type: string
+          enum: [TRANSFER, WIRE_TRANSFER, ACH, CHECK, CREDIT_CARD, DEBIT_CARD, MOBILE_PAYMENT, LOAN_PAYMENT, BILL_PAYMENT]
+          description: |-
+            Kind of payment, with the monolith's PaymentType values. Required:
+            an omitted, null or unknown value is a 400 INVALID_REQUEST. Stored
+            with the decision and compared on retry. Policy rsk-policy-v3
+            decides a MOBILE_PAYMENT above 5000 USD as BLOCK
+            (SUSPICIOUS_MOBILE_AMOUNT).
     RiskAssessmentResponse:
       type: object
       required: [assessmentId, transactionId, score, decision, reasons, assessedAt]
@@ -120,8 +209,48 @@ components:
           enum: [ALLOW, REVIEW, BLOCK]
         reasons:
           type: array
+          description: |-
+            Policy reason codes, for example HIGH_AMOUNT, VERY_HIGH_AMOUNT,
+            HIGH_RISK_COUNTRY, HIGH_VELOCITY, MEDIUM_VELOCITY,
+            SUSPICIOUS_ROUND_AMOUNT, SUSPICIOUS_MOBILE_AMOUNT. Amount
+            thresholds and suspicious patterns are per currency (USD only
+            today); for any other currency the amount is not scored,
+            UNSUPPORTED_CURRENCY is added and the decision is at least REVIEW.
+            A suspicious pattern decides BLOCK. Clients must accept codes they
+            do not know.
           items:
             type: string
         assessedAt:
+          type: string
+          format: date-time
+        attestationSource:
+          type: string
+          description: |-
+            Who vouches for the risk facts the decision rests on. CALLER_ATTESTED:
+            highRiskCountry and velocityScore were stated by the caller and not
+            verified by this service. Clients must accept values they do not know.
+        ruleSetVersion:
+          type: string
+          description: |-
+            Policy rule set that made the decision, for example rsk-policy-v3
+            (per-currency amount thresholds and the monolith's suspicious
+            patterns). A retry returns the stored
+            decision with the version it was made under.
+        attestedBy:
+          type: string
+          description: |-
+            The caller that stated the risk facts: the client id (azp) of a
+            service caller, or the subject of a staff caller.
+    ErrorResponse:
+      type: object
+      required: [code, message, interactionId, timestamp]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        interactionId:
+          type: string
+        timestamp:
           type: string
           format: date-time

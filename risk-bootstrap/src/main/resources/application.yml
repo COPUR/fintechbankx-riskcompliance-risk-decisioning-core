@@ -1,0 +1,202 @@
+# svc-rsk-decisioning runtime configuration.
+# Every environment-specific value comes from the environment (Helm values,
+# Kubernetes Secret synced from AWS Secrets Manager); nothing secret is here.
+spring:
+  application:
+    name: risk-decisioning-service
+  threads:
+    virtual:
+      enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 25s
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/db_rsk_decisioning_local}
+    username: ${DB_USERNAME:risk_decisioning_app}
+    # The credential is bound from SPRING_DATASOURCE_PASSWORD (Kubernetes Secret
+    # synced from AWS Secrets Manager); it is never written in this file.
+    hikari:
+      schema: sc_rsk_decisioning
+      maximum-pool-size: ${DB_POOL_MAX:10}
+      minimum-idle: ${DB_POOL_MIN_IDLE:2}
+      connection-timeout: 3000
+      max-lifetime: 1200000
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: sc_rsk_decisioning
+        jdbc:
+          time_zone: UTC
+          batch_size: 50
+  flyway:
+    # The service pods never migrate (risk.database.flyway below): the chart's
+    # pre-install/pre-upgrade Job runs this image with the argument "migrate"
+    # (DatabaseMigration, profile db-migrate). Flyway connects as the schema
+    # owner (DB_MIGRATION_USERNAME / _PASSWORD, the db-migration secret)
+    # through the same verified DB_URL: it has no URL of its own. The runtime role (DB_USERNAME) is the Flyway placeholder
+    # runtime_role, which V11 grants least privilege. Without DB_MIGRATION_*
+    # (local single-user runs) Flyway uses the app credentials and V11 changes
+    # nothing. The history table keeps Flyway's default name
+    # (flyway_schema_history), which V11 grants the runtime role to read.
+    user: ${DB_MIGRATION_USERNAME:${spring.datasource.username}}
+    password: ${DB_MIGRATION_PASSWORD:${spring.datasource.password:}}
+    placeholders:
+      runtime_role: ${spring.datasource.username}
+    schemas: sc_rsk_decisioning
+    default-schema: sc_rsk_decisioning
+    create-schemas: true
+    locations: classpath:db/migration
+  # Runtime-neutral Kafka client (platform guide SERVICE_CLIENT_CONFIGURATION.md);
+  # authentication comes from the kafka-msk or kafka-strimzi profile below.
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    security:
+      protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
+    admin:
+      # Topics exist only through the platform catalog; the service never creates them.
+      auto-create: false
+    producer:
+      client-id: svc-rsk-decisioning
+      acks: all
+      compression-type: lz4
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+        # Kafka requires delivery.timeout.ms >= linger.ms + request.timeout.ms;
+        # with the default request timeout (30 s) the producer would not start.
+        delivery.timeout.ms: 30000
+        request.timeout.ms: 20000
+        linger.ms: 5
+        # send() blocks for metadata (e.g. a topic that does not exist yet) at most
+        # 10 s instead of the 60 s default, so one relay tick cannot hold its DB
+        # connection and the advisory lock for about 95 s.
+        max.block.ms: 10000
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${OIDC_ISSUER_URI:http://localhost:8180/realms/fintechbankx}
+          jwk-set-uri: ${OIDC_JWK_SET_URI:http://localhost:8180/realms/fintechbankx/protocol/openid-connect/certs}
+
+server:
+  port: 8080
+  shutdown: graceful
+  forward-headers-strategy: framework
+
+management:
+  server:
+    port: 8081
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+        liveness:
+          include: livenessState
+  metrics:
+    tags:
+      service: svc-rsk-decisioning
+      # Platform alert rules select on these (the chart sets both from its values).
+      app: ${METRICS_APP:risk-decisioning-service}
+      squad: ${METRICS_SQUAD:risk}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  observations:
+    key-values:
+      service: svc-rsk-decisioning
+
+fintechbankx:
+  security:
+    # Tokens must carry this service id in "aud" (Keycloak audience mapper on each
+    # calling client, platform contract); a blank value stops startup.
+    audience: ${OIDC_AUDIENCE:svc-rsk-decisioning}
+    # Client ids (token "azp") allowed to ask for decisions with the SERVICE role.
+    service-callers: ${SERVICE_CALLERS:svc-pay-initiation-settlement}
+
+risk:
+  outbox:
+    retention: P7D
+    relay:
+      # Off unless switched on: the chart turns it on at runbook step 4; local runs
+      # with a broker set OUTBOX_RELAY_ENABLED=true.
+      enabled: ${OUTBOX_RELAY_ENABLED:false}
+      interval: PT1S
+      batch-size: 100
+      # Longer than delivery.timeout.ms, so the relay never gives up on a send
+      # that Kafka is still retrying (which would publish it twice).
+      send-timeout: PT35S
+      # ADR-021 decision 4: payload errors (RecordTooLarge, Serialization,
+      # InvalidTopic) park the row; every other failure stops the batch without
+      # marking the row and is retried with backoff, never parked. There is no
+      # attempt cap and no time ceiling. Alert on outbox_oldest_pending_age_seconds.
+      # After a stopped batch the relay waits interval, then doubles the wait per
+      # stopped run up to this cap; any run that does not stop resets it.
+      max-backoff: ${OUTBOX_RELAY_MAX_BACKOFF:PT5M}
+  database:
+    # validate: at startup Flyway checks the schema history as the runtime role
+    # and the service refuses to start while a migration is pending or an
+    # applied one differs (the Deployment rollout then stalls, old pods keep
+    # serving). migrate: only the migration Job (profile db-migrate) and tests.
+    # Flyway never migrates in the service pods (decision 0002).
+    flyway: validate
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name},%X{traceId:-},%X{spanId:-},%X{correlationId:-}]"
+
+---
+# Migration Job (chart templates/migration-job.yaml, image args "migrate"):
+# DatabaseMigration starts only the datasource and Flyway with this profile,
+# migrates as the schema owner and exits.
+spring:
+  config:
+    activate:
+      on-profile: db-migrate
+risk:
+  database:
+    flyway: migrate
+
+---
+# Amazon MSK with IAM client authentication (SASL_SSL / AWS_MSK_IAM). The pod's
+# IRSA role (deploy/terraform) supplies the credentials. Activated with
+# SPRING_PROFILES_ACTIVE=kafka-msk in the Helm values; local runs use PLAINTEXT.
+spring:
+  config:
+    activate:
+      on-profile: kafka-msk
+  kafka:
+    security:
+      protocol: SASL_SSL
+    properties:
+      sasl.mechanism: AWS_MSK_IAM
+      sasl.jaas.config: "software.amazon.msk.auth.iam.IAMLoginModule required;"
+      sasl.client.callback.handler.class: software.amazon.msk.auth.iam.IAMClientCallbackHandler
+
+---
+# In-cluster Strimzi (non-AWS clusters): mutual TLS with the KafkaUser
+# certificate. KAFKA_TLS_CERT, KAFKA_TLS_KEY and KAFKA_TLS_CA hold PEM content
+# mapped from Secret kafka-client-tls (secretKeyRef); no keystore files.
+spring:
+  config:
+    activate:
+      on-profile: kafka-strimzi
+  kafka:
+    security:
+      protocol: SSL
+    ssl:
+      key-store-type: PEM
+      trust-store-type: PEM
+      key-store-certificate-chain: ${KAFKA_TLS_CERT}
+      key-store-key: ${KAFKA_TLS_KEY}
+      trust-store-certificates: ${KAFKA_TLS_CA}
