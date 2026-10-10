@@ -69,7 +69,7 @@ spec:
             # The runtime role V11 grants (Flyway placeholder runtime_role).
             - name: DB_USERNAME
               value: {{ include "risk.envValue" (list "DB_USERNAME" .Values.config.DB_USERNAME) }}
-            # Aurora CA bundle; also turns on DatabaseTlsGuard.
+            # Aurora CA bundle; DatabaseTlsGuard, on by default in the Job too, requires it.
             - name: DB_SSL_ROOT_CERT
               value: {{ include "risk.envValue" (list "DB_SSL_ROOT_CERT" (include "risk.databaseCaFile" .)) }}
           resources:

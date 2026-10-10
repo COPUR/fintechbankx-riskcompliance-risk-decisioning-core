@@ -44,7 +44,8 @@ run Flyway as a Job: its pods carry `app.kubernetes.io/name=<service account>`
 3. **The Job reuses the service image in migrate-only mode.** With the first
    argument `migrate`, `RiskDecisioningApplication` hands over to
    `DatabaseMigration`. That starts only the datasource, Flyway and
-   `DatabaseTlsGuard` (profile `db-migrate`, `risk.database.flyway=migrate`),
+   `DatabaseTlsGuard` (on by default, so the Job needs the `DB_SSL_ROOT_CERT`
+   the chart sets; profile `db-migrate`, `risk.database.flyway=migrate`),
    migrates as the schema owner and exits: 0 when every migration is applied,
    1 otherwise. It starts no web server, JPA, Kafka, security or outbox relay.
 4. **Only the Job sees the owner credential.** The Job gets the `db-migration`

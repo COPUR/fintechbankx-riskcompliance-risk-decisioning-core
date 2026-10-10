@@ -59,8 +59,8 @@ spec:
             - name: http-management
               containerPort: {{ int .Values.service.managementPort }}
           env:
-            # Aurora CA bundle (DB_URL sslrootcert points at the same file); also turns on DatabaseTlsGuard and
-            # KafkaTlsGuard.
+            # Aurora CA bundle (DB_URL sslrootcert points at the same file). DatabaseTlsGuard, on by default,
+            # requires it; KafkaTlsGuard is on by default too (only the local profile and tests switch them off).
             - name: DB_SSL_ROOT_CERT
               value: {{ include "risk.envValue" (list "DB_SSL_ROOT_CERT" (include "risk.databaseCaFile" .)) }}
             # The only Spring profile, from kafka.runtime (fbx.kafkaProfile): kafka-msk (Amazon MSK IAM, SASL_SSL) or

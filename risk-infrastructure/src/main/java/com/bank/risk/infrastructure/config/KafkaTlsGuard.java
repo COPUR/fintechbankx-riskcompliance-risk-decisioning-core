@@ -21,12 +21,12 @@ import org.springframework.core.env.Environment;
  * settings win over the common ones) and refuses to start unless the
  * effective {@code security.protocol} is one of {@link #ACCEPTED_PROTOCOLS}.
  *
- * <p>Registered by {@link KafkaTlsConfiguration} whenever DB_SSL_ROOT_CERT is
- * set (the chart always sets it from the mounted RDS CA bundle), relay on or
- * off, exactly like {@link DatabaseTlsGuard}: the relay flag decides whether
- * anything publishes, not whether the producer is checked. Local runs and
- * tests have no bundle, so the guard is off for them. Messages name the
- * property and the value, never a broker address.
+ * <p>Registered by {@link KafkaTlsConfiguration} by default, relay on or off,
+ * exactly like {@link DatabaseTlsGuard}: the relay flag decides whether
+ * anything publishes, not whether the producer is checked, and the RDS bundle
+ * is not a switch. Only the local profile or the test switch
+ * ({@link StartupAssertions}) leave it out. Messages name the property and
+ * the value, never a broker address.
  */
 public final class KafkaTlsGuard implements BeanFactoryPostProcessor {
 
@@ -54,9 +54,11 @@ public final class KafkaTlsGuard implements BeanFactoryPostProcessor {
         Object protocol = producer.get(SECURITY_PROTOCOL);
         if (protocol == null || !ACCEPTED_PROTOCOLS.contains(protocol.toString())) {
             throw new IllegalStateException(KAFKA_PREFIX + " producer " + SECURITY_PROTOCOL
-                    + " must be SASL_SSL or SSL when " + DatabaseTlsGuard.ROOT_CERT_PROPERTY
-                    + " is set (Amazon MSK with IAM authentication, profile kafka-msk, or Strimzi mutual TLS, profile"
-                    + " kafka-strimzi), got " + (protocol == null ? "none (Kafka defaults to PLAINTEXT)" : protocol));
+                    + " must be SASL_SSL or SSL, relay on or off (Amazon MSK with IAM authentication, profile"
+                    + " kafka-msk, or Strimzi mutual TLS, profile kafka-strimzi); the TLS startup assertions are on"
+                    + " by default and only the Spring profile " + StartupAssertions.LOCAL_PROFILE + " or "
+                    + StartupAssertions.ENFORCE_PROPERTY + "=false (tests) turn them off; got "
+                    + (protocol == null ? "none (Kafka defaults to PLAINTEXT)" : protocol));
         }
     }
 }

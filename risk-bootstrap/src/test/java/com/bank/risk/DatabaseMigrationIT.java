@@ -121,12 +121,18 @@ class DatabaseMigrationIT {
         assertThat(DatabaseMigration.run(arguments)).isNotZero();
     }
 
-    /** The service pod path, same rule: without the bundle, the local profile or the test switch it does not start. */
+    /**
+     * The service pod path, same rule: without the bundle, the local profile or
+     * the test switch it does not start. Both guards refuse this shape (no
+     * bundle, PLAINTEXT producer) and run in component-scan order, so the
+     * message checked is the one they share.
+     */
     @Test
     void theServiceRefusesToStartWithoutTheBundle() {
         assertThatThrownBy(() -> tlsAssertingService())
             .isInstanceOf(IllegalStateException.class)
-            .hasMessageContaining(NO_BUNDLE);
+            .hasMessageContaining("the TLS startup assertions are on by default")
+            .hasMessageContaining("fintechbankx.tls.enforce=false (tests)");
     }
 
     /** The local profile is the developer's switch: the same service shape starts with it. */

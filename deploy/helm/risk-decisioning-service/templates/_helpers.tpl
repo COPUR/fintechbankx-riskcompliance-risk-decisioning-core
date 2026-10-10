@@ -74,7 +74,8 @@ helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 {{- if eq $migration $runtime -}}
 {{- fail "externalSecret.migrationSecretName must not be the runtime secret (externalSecret.remoteSecretName): the migration Job runs Flyway as the schema owner and the service as the runtime role, never one credential for both" -}}
 {{- end -}}
-{{- if not (regexMatch (printf "^[a-z0-9-]+/%s/" .Values.serviceAccount.name) $key) -}}
+{{- /* Literal prefix (regexQuoteMeta, as in customer); risk.guard has already refused any name that is not a DNS label. */ -}}
+{{- if not (regexMatch (printf "^[a-z0-9-]+/%s/" (regexQuoteMeta (toString .Values.serviceAccount.name))) $key) -}}
 {{- fail (printf "externalSecret.migrationSecretName must be <env>/%s/..., got %s" .Values.serviceAccount.name $key) -}}
 {{- end -}}
 {{- end -}}
@@ -147,8 +148,8 @@ Adapter: every route of this chart that feeds the pod's environment.
 The guard refuses, in every relaxed-binding spelling: datasource, Flyway,
 Liquibase and R2DBC names (but not SPRING_DATASOURCE_USERNAME/_PASSWORD),
 spring.application.json, JDBC URL and TLS parameter names (DB_SSL_ROOT_CERT
-included: the chart renders it from databaseCa, and it arms DatabaseTlsGuard
-and KafkaTlsGuard), DB_URL in another spelling, spring.config.*,
+included: the chart renders it from databaseCa, and DatabaseTlsGuard, on by
+default like KafkaTlsGuard, requires it), DB_URL in another spelling, spring.config.*,
 spring.profiles.* (the chart renders the only profile, from kafka.runtime),
 spring.ssl.* and SSL bundles, fintechbankx.tls.*, a JVM options value that
 names a datasource, TLS or config property, a Kafka security.protocol other
