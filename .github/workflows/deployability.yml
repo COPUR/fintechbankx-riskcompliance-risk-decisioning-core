@@ -158,6 +158,8 @@ jobs:
       - run: terraform fmt -check -recursive
       - run: terraform init -backend=false -input=false
       - run: terraform validate
+      # Offline plan with a mocked AWS provider (tests/*.tftest.hcl): the IRSA role writes only evt.rsk.risk.v1.
+      - run: terraform test
 
   data-split:
     name: deploy/data-split-rehearsal
