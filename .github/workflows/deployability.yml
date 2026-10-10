@@ -206,6 +206,17 @@ jobs:
             --set-string 'config.FINTECHBANKX-TLS-ENFORCE=true'
           reject_render "config.fintechbankx.tls.enforce[0] is not allowed: $tls_switch" \
             --set-string 'config.fintechbankx\.tls\.enforce\[0\]=false'
+          # ...and the fully separator-free spellings the guard lets through (its rule wants a separator or the
+          # end after "tls"); this chart refuses every config key whose normalised form (upper case, every
+          # non-alphanumeric character dropped) starts with FINTECHBANKXTLS, like its other normalised rules.
+          tls_chart="must not be set: fintechbankx.tls.enforce is the test switch of the TLS startup assertions"
+          reject_render "config.FINTECHBANKXTLSENFORCE $tls_chart" --set-string 'config.FINTECHBANKXTLSENFORCE=false'
+          reject_render "config.FintechbankxTlsEnforce $tls_chart" --set-string 'config.FintechbankxTlsEnforce=false'
+          reject_render "config.fintechbankxtlsenforce $tls_chart" --set-string 'config.fintechbankxtlsenforce=false'
+          # (the guard itself still refuses the spellings with a separator after "tls", before the chart's rule)
+          for key in FINTECHBANKX_TLS_ENFORCE 'fintechbankx\.tls\.enforce' FINTECHBANKXTLS_ENFORCE FINTECHBANKXTLS; do
+            reject_render "config.${key//\\/} is not allowed: $tls_switch" --set-string "config.$key=false"
+          done
           # The local profile is for a developer machine (plain-text local services). The chart renders the only
           # profile, SPRING_PROFILES_ACTIVE from kafka.runtime, so the guard refuses every spring.profiles.* config key,
           # in every spelling, whatever it names.
