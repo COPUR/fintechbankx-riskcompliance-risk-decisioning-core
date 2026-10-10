@@ -123,7 +123,7 @@ class RiskOutboxIT {
             "select topic, event_type, aggregate_type, aggregate_id, aggregate_version, correlation_id, published_at from " + OUTBOX);
         assertThat(rows).hasSize(1);
         Map<String, Object> row = rows.getFirst();
-        assertThat(row.get("topic")).isEqualTo("evt.rsk.risk.assessed.v1");
+        assertThat(row.get("topic")).isEqualTo("evt.rsk.risk.v1");
         assertThat(row.get("event_type")).isEqualTo("Risk.RiskAssessment.Assessed.v1");
         assertThat(row.get("aggregate_type")).isEqualTo("RiskAssessment");
         assertThat(row.get("aggregate_id")).isEqualTo(assessmentId);
@@ -194,6 +194,44 @@ class RiskOutboxIT {
         assertThat(count(OUTBOX)).isZero();
     }
 
+    /**
+     * V10 moves rows still waiting for the relay (pending or parked) from the
+     * per-event topic to the aggregate topic evt.rsk.risk.v1 (ADR-019 section 8).
+     * Published rows keep the topic they were sent to. Runs the real migrations
+     * into a throwaway schema: up to V9, rows written the old way, then the rest.
+     */
+    @Test
+    void v10MovesUnpublishedRowsToTheAggregateTopicAndLeavesPublishedRowsAlone() throws Exception {
+        String schema = "sc_rsk_v10_probe";
+        jdbc.execute("drop schema if exists " + schema + " cascade");
+        try {
+            org.flywaydb.core.Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema)
+                .createSchemas(true).locations("classpath:db/migration").target("9").load().migrate();
+            String insert = "insert into " + schema + ".outbox_event (event_id, aggregate_type, aggregate_id, aggregate_version,"
+                + " event_type, topic, payload, correlation_id, occurred_at, published_at, parked_at)"
+                + " values (?::uuid, 'RiskAssessment', ?, 0, 'Risk.RiskAssessment.Assessed.v1', 'evt.rsk.risk.assessed.v1',"
+                + " '{}'::jsonb, 'corr-v10', now(), ?, ?)";
+            java.sql.Timestamp now = java.sql.Timestamp.from(java.time.Instant.now());
+            jdbc.update(insert, "00000000-0000-4000-8000-000000000001", "RISK-PENDING", null, null);
+            jdbc.update(insert, "00000000-0000-4000-8000-000000000002", "RISK-PARKED", null, now);
+            jdbc.update(insert, "00000000-0000-4000-8000-000000000003", "RISK-SENT", now, null);
+
+            org.flywaydb.core.Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema)
+                .locations("classpath:db/migration").load().migrate();
+
+            Map<String, String> topics = new java.util.HashMap<>();
+            jdbc.query("select aggregate_id, topic from " + schema + ".outbox_event",
+                rs -> { topics.put(rs.getString(1), rs.getString(2)); });
+            assertThat(topics).containsEntry("RISK-PENDING", "evt.rsk.risk.v1")
+                .containsEntry("RISK-PARKED", "evt.rsk.risk.v1")
+                .containsEntry("RISK-SENT", "evt.rsk.risk.assessed.v1");
+            assertThat(jdbc.queryForObject("select max(version::int) from " + schema + ".flyway_schema_history",
+                Integer.class)).isGreaterThanOrEqualTo(10);
+        } finally {
+            jdbc.execute("drop schema if exists " + schema + " cascade");
+        }
+    }
+
     @Test
     void theOutboxRefusesToWriteOutsideATransaction() {
         RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("PAY-NO-TX", new BigDecimal("1.00"), "AED", false, 0, "svc-pay-initiation-settlement", PaymentType.TRANSFER), 0,
@@ -219,8 +257,12 @@ class RiskOutboxIT {
 
         ArgumentCaptor<ProducerRecord<String, String>> records = ArgumentCaptor.forClass(ProducerRecord.class);
         Mockito.verify(kafka).send(records.capture());
-        assertThat(records.getValue().topic()).isEqualTo("evt.rsk.risk.assessed.v1");
+        assertThat(records.getValue().topic()).isEqualTo("evt.rsk.risk.v1");
         assertThat(records.getValue().key()).isEqualTo(assessmentId);
+        JsonNode sentEnvelope = json.readTree(records.getValue().value());
+        assertThat(recordHeader(records.getValue(), "eventType")).isEqualTo(sentEnvelope.get("eventType").asText());
+        assertThat(recordHeader(records.getValue(), "eventId")).isEqualTo(sentEnvelope.get("eventId").asText());
+        assertThat(recordHeader(records.getValue(), "correlationId")).isEqualTo(sentEnvelope.get("correlationId").asText());
         assertThat(outbox.countByPublishedAtIsNull()).isZero();
         assertThat(relay.purgePublished()).isZero();
         assertThat(count(OUTBOX)).isEqualTo(1);
@@ -260,7 +302,7 @@ class RiskOutboxIT {
         assess("PAY-PARK-2", "20.00").andExpect(status().isCreated());
         when(kafka.send(any(ProducerRecord.class)))
             .thenReturn(CompletableFuture.failedFuture(new KafkaProducerException(
-                new ProducerRecord<>("evt.rsk.risk.assessed.v1", "k", "v"), "Failed to send",
+                new ProducerRecord<>("evt.rsk.risk.v1", "k", "v"), "Failed to send",
                 new RecordTooLargeException("too large"))))
             .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
@@ -308,7 +350,7 @@ class RiskOutboxIT {
             + " where payload -> 'data' ->> 'transactionId' = 'PAY-CNT-1') AND published_at IS NULL AND parked_at IS NULL");
         when(kafka.send(any(ProducerRecord.class)))
             .thenReturn(CompletableFuture.failedFuture(new KafkaProducerException(
-                new ProducerRecord<>("evt.rsk.risk.assessed.v1", "k", "v"), "Failed to send",
+                new ProducerRecord<>("evt.rsk.risk.v1", "k", "v"), "Failed to send",
                 new RecordTooLargeException("too large"))))
             .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         io.micrometer.core.instrument.simple.SimpleMeterRegistry metrics =
@@ -356,7 +398,7 @@ class RiskOutboxIT {
         assess("PAY-STOP-1", "10.00").andExpect(status().isCreated());
         assess("PAY-STOP-2", "20.00").andExpect(status().isCreated());
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.failedFuture(new KafkaProducerException(
-            new ProducerRecord<>("evt.rsk.risk.assessed.v1", "k", "v"), "Failed to send",
+            new ProducerRecord<>("evt.rsk.risk.v1", "k", "v"), "Failed to send",
             new org.apache.kafka.common.errors.NetworkException("broker down"))));
         OutboxRelay relay = relayOver(outbox);
 
@@ -486,5 +528,9 @@ class RiskOutboxIT {
             .content("""
                 {"transactionId": "%s", "amount": %s, "currency": "USD", "highRiskCountry": true, "velocityScore": 80, "paymentType": "TRANSFER"}
                 """.formatted(transactionId, amount)));
+    }
+
+    private static String recordHeader(ProducerRecord<String, String> record, String name) {
+        return new String(record.headers().lastHeader(name).value(), StandardCharsets.UTF_8);
     }
 }

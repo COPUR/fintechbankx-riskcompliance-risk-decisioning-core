@@ -39,13 +39,39 @@ class RiskEventsAsyncApiContractTest {
             .toOutboxRow(assessment.getDomainEvents().getFirst(), "corr-contract", null);
         JsonNode envelope = json.readTree(row.getPayload());
 
-        assertThat(row.getTopic()).isEqualTo(at(contract, "channels", "assessed", "address"));
+        // ADR-019: one channel per aggregate; the event is named by eventType, not by the topic.
+        Map<String, Object> channels = at(contract, "channels");
+        assertThat(channels).as("one channel, for the RiskAssessment aggregate").containsOnlyKeys("risk");
+        String address = at(contract, "channels", "risk", "address");
+        assertThat(address).isEqualTo("evt.rsk.risk.v1");
+        assertThat(this.<String>at(contract, "channels", "risk", "bindings", "kafka", "topic")).isEqualTo(address);
+        assertThat(this.<String>at(contract, "info", "x-event-namespace") + ".v1").isEqualTo(address);
+        assertThat(row.getTopic()).isEqualTo(address);
+        assertThat(this.<String>at(contract, "channels", "risk", "messages", "RiskAssessed", "$ref"))
+            .isEqualTo("#/components/messages/RiskAssessed");
         assertThat(envelope.get("eventType").asText())
             .isEqualTo(at(contract, "components", "messages", "RiskAssessed", "title"));
         List<Map<String, Object>> allOf = at(contract, "components", "messages", "RiskAssessed", "payload", "allOf");
         Map<String, Object> constants = at(allOf.get(1), "properties");
         assertThat(envelope.get("eventType").asText()).isEqualTo(at(constants, "eventType", "const"));
         assertThat(envelope.get("producer").asText()).isEqualTo(at(constants, "producer", "const"));
+        // The eventType record header carries the same const as the payload (catalog check, ADR-019 section 3).
+        List<Map<String, Object>> headers = at(contract, "components", "messages", "RiskAssessed", "headers", "allOf");
+        assertThat(headers).hasSize(2);
+        assertThat(this.<String>at(headers.get(0), "$ref")).isEqualTo("#/components/schemas/EventHeaders");
+        assertThat(this.<String>at(contract, "components", "schemas", "EventHeaders", "$ref"))
+            .isEqualTo("./common/event-envelope.yaml#/EventHeaders");
+        assertThat(this.<String>at(headers.get(1), "properties", "eventType", "const"))
+            .isEqualTo(envelope.get("eventType").asText());
+        Map<String, Object> eventHeaders = at(envelopeSchemas, "EventHeaders");
+        assertThat(this.<List<String>>at(eventHeaders, "required")).containsExactlyInAnyOrder("eventType", "eventId", "correlationId");
+        // The vendored envelope is the asyncapi catalog's 44837cc copy: every dead-letter header is UTF-8 text.
+        for (String dlqHeader : List.of("dlq-original-partition", "dlq-original-offset", "dlq-attempts")) {
+            assertThat(this.<String>at(envelopeSchemas, "DeadLetterHeaders", "properties", dlqHeader, "type"))
+                .as("%s is text", dlqHeader).isEqualTo("string");
+        }
+        List<Map<String, Object>> operations = List.copyOf(this.<Map<String, Map<String, Object>>>at(contract, "operations").values());
+        assertThat(operations).allSatisfy(op -> assertThat(this.<String>at(op, "channel", "$ref")).isEqualTo("#/channels/risk"));
 
         Map<String, Object> envelopeSchema = at(envelopeSchemas, "EventEnvelope");
         for (String field : this.<List<String>>at(envelopeSchema, "required")) {
@@ -63,7 +89,6 @@ class RiskEventsAsyncApiContractTest {
         // the optional attestationSource ships in 1.0.0, so no "since" history in descriptions.
         String version = at(contract, "info", "version");
         assertThat(version).isEqualTo("1.0.0");
-        String address = at(contract, "channels", "assessed", "address");
         assertThat(address).as("topic suffix .vN matches the contract major")
             .endsWith(".v" + version.substring(0, version.indexOf('.')));
         assertThat(this.<String>at(dataSchema, "properties", "attestationSource", "description"))

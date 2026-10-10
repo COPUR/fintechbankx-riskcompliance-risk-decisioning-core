@@ -32,6 +32,8 @@ dependencies {
     runtimeOnly 'org.flywaydb:flyway-database-postgresql'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    // RiskOutboxIT runs the migrations step by step (V10 rewrite of pending outbox rows).
+    testImplementation 'org.flywaydb:flyway-core'
     testImplementation 'org.springframework.security:spring-security-test'
     testImplementation 'org.testcontainers:junit-jupiter'
     testImplementation 'org.testcontainers:postgresql'

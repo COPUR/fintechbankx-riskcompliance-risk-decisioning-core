@@ -1,6 +1,15 @@
 package com.bank.risk.infrastructure.outbox;
 
+import com.bank.risk.domain.PaymentType;
+import com.bank.risk.domain.RiskAssessment;
+import com.bank.risk.domain.RiskDecision;
+import com.bank.risk.domain.port.in.RiskEvaluationCommand;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.kafka.clients.producer.MockProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.header.Header;
+import org.apache.kafka.common.serialization.StringSerializer;
 import org.apache.kafka.common.errors.NetworkException;
 import org.apache.kafka.common.errors.RecordTooLargeException;
 import org.apache.kafka.common.errors.SerializationException;
@@ -11,11 +20,13 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.kafka.core.KafkaProducerException;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.mock.MockProducerFactory;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
@@ -185,7 +196,7 @@ class OutboxRelayTest {
             new org.apache.kafka.common.errors.SaslAuthenticationException("bad IAM signature"),
             new org.apache.kafka.common.errors.AuthenticationException("not authenticated"),
             new org.apache.kafka.common.errors.AuthorizationException("not authorized"),
-            new TopicAuthorizationException(Set.of("evt.rsk.risk.assessed.v1")),
+            new TopicAuthorizationException(Set.of("evt.rsk.risk.v1")),
             new org.apache.kafka.common.KafkaException("unclassified Kafka failure"),
             new IllegalStateException("any other exception"));
     }
@@ -296,7 +307,7 @@ class OutboxRelayTest {
     static Stream<RuntimeException> nonPayloadFailuresLastingADay() {
         return Stream.of(new NetworkException("broker down"),
             new org.apache.kafka.common.errors.SaslAuthenticationException("bad IAM signature"),
-            new TopicAuthorizationException(Set.of("evt.rsk.risk.assessed.v1")));
+            new TopicAuthorizationException(Set.of("evt.rsk.risk.v1")));
     }
 
     @Test
@@ -523,7 +534,7 @@ class OutboxRelayTest {
 
     /** What KafkaTemplate completes its future with when the producer reports a failure. */
     private static KafkaProducerException producerFailure(Throwable cause) {
-        return new KafkaProducerException(new ProducerRecord<>("evt.rsk.risk.assessed.v1", "k", "v"),
+        return new KafkaProducerException(new ProducerRecord<>("evt.rsk.risk.v1", "k", "v"),
             "Failed to send", cause);
     }
 
@@ -533,7 +544,7 @@ class OutboxRelayTest {
 
         ProducerRecord<String, String> record = OutboxRelay.toRecord(row);
 
-        assertThat(record.topic()).isEqualTo("evt.rsk.risk.assessed.v1");
+        assertThat(record.topic()).isEqualTo("evt.rsk.risk.v1");
         assertThat(record.key()).isEqualTo("RISK-9");
         assertThat(record.value()).isEqualTo("{}");
         assertThat(header(record, "eventType")).isEqualTo("Risk.RiskAssessment.Assessed.v1");
@@ -542,11 +553,51 @@ class OutboxRelayTest {
         assertThat(header(record, "x-fapi-interaction-id")).isEqualTo("corr-9");
     }
 
+    /**
+     * ADR-019 sections 1 and 3, read back from what the producer was handed: a
+     * row built by the envelope factory goes to the aggregate topic
+     * evt.rsk.risk.v1, keyed by the assessment id, with UTF-8 headers eventType
+     * (equal to the envelope eventType), eventId, correlationId and traceparent.
+     */
+    @Test
+    void theRelaySendsEachEventToTheAggregateTopicWithTheRoutingHeaders() throws Exception {
+        String traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("PAY-HDR-1",
+            new BigDecimal("15000.00"), "AED", false, 0, "svc-pay-initiation-settlement", PaymentType.TRANSFER),
+            75, RiskDecision.REVIEW, List.of("HIGH_AMOUNT"), "rsk-policy-v3");
+        ObjectMapper json = new ObjectMapper();
+        OutboxEventJpaEntity row = new RiskEventEnvelopeFactory(json)
+            .toOutboxRow(assessment.getDomainEvents().getFirst(), "corr-hdr-1", traceparent);
+        MockProducer<String, String> producer = new MockProducer<>(true, new StringSerializer(), new StringSerializer());
+        OutboxRelay mockProducerRelay = new OutboxRelay(outbox, new KafkaTemplate<>(new MockProducerFactory<>(() -> producer)),
+            transactions, clock, 50, Duration.ofSeconds(1), Duration.ofDays(7), BACKOFF_BASE, BACKOFF_CAP, registry);
+        when(outbox.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(row));
+
+        assertThat(mockProducerRelay.relayOnce()).isEqualTo(1);
+
+        assertThat(producer.history()).hasSize(1);
+        ProducerRecord<String, String> sent = producer.history().getFirst();
+        JsonNode envelope = json.readTree(sent.value());
+        assertThat(sent.topic()).isEqualTo("evt.rsk.risk.v1");
+        assertThat(sent.key()).isEqualTo(assessment.getId().getValue()).isEqualTo(envelope.get("aggregateId").asText());
+        assertThat(header(sent, "eventType")).isEqualTo(envelope.get("eventType").asText())
+            .isEqualTo("Risk.RiskAssessment.Assessed.v1");
+        assertThat(header(sent, "eventId")).isEqualTo(envelope.get("eventId").asText());
+        assertThat(header(sent, "correlationId")).isEqualTo(envelope.get("correlationId").asText()).isEqualTo("corr-hdr-1");
+        assertThat(header(sent, "traceparent")).isEqualTo(traceparent);
+        for (String required : List.of("eventType", "eventId", "correlationId")) {
+            Header[] all = sent.headers().toArray();
+            assertThat(java.util.Arrays.stream(all).filter(h -> h.key().equals(required)))
+                .as("exactly one %s header", required).hasSize(1);
+        }
+    }
+
     @Test
     void theTraceContextOfTheOriginalRequestTravelsAsATraceparentHeader() {
         String traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
         OutboxEventJpaEntity traced = new OutboxEventJpaEntity(UUID.randomUUID(), "RiskAssessment", "RISK-10", 0L,
-            "Risk.RiskAssessment.Assessed.v1", "evt.rsk.risk.assessed.v1", "{}", "corr-10", NOW, traceparent);
+            "Risk.RiskAssessment.Assessed.v1", "evt.rsk.risk.v1", "{}", "corr-10", NOW, traceparent);
 
         assertThat(header(OutboxRelay.toRecord(traced), "traceparent")).isEqualTo(traceparent);
         assertThat(OutboxRelay.toRecord(row("RISK-11")).headers().lastHeader("traceparent"))
@@ -568,7 +619,7 @@ class OutboxRelayTest {
     void rowKeepsEveryColumnItWasWrittenWith() {
         UUID id = UUID.randomUUID();
         OutboxEventJpaEntity row = new OutboxEventJpaEntity(id, "RiskAssessment", "RISK-4", 0L,
-            "Risk.RiskAssessment.Assessed.v1", "evt.rsk.risk.assessed.v1", "{}", "corr-4", NOW, null);
+            "Risk.RiskAssessment.Assessed.v1", "evt.rsk.risk.v1", "{}", "corr-4", NOW, null);
 
         assertThat(row.getEventId()).isEqualTo(id);
         assertThat(row.getAggregateType()).isEqualTo("RiskAssessment");
@@ -581,7 +632,7 @@ class OutboxRelayTest {
 
     private static OutboxEventJpaEntity row(String aggregateId) {
         return new OutboxEventJpaEntity(UUID.randomUUID(), "RiskAssessment", aggregateId, 0L,
-            "Risk.RiskAssessment.Assessed.v1", "evt.rsk.risk.assessed.v1", "{}", "corr-9", NOW, null);
+            "Risk.RiskAssessment.Assessed.v1", "evt.rsk.risk.v1", "{}", "corr-9", NOW, null);
     }
 
     private static TransactionTemplate inlineTransactions() {

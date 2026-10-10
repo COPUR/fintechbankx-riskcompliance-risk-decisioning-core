@@ -37,7 +37,7 @@ class RiskEventEnvelopeFactoryTest {
         JsonNode envelope = json.readTree(row.getPayload());
 
         assertThat(row.getEventId()).isEqualTo(event.eventId());
-        assertThat(row.getTopic()).isEqualTo("evt.rsk.risk.assessed.v1");
+        assertThat(row.getTopic()).isEqualTo("evt.rsk.risk.v1");
         assertThat(row.getEventType()).isEqualTo("Risk.RiskAssessment.Assessed.v1");
         assertThat(row.getAggregateType()).isEqualTo("RiskAssessment");
         assertThat(row.getAggregateId()).isEqualTo(assessment.getId().getValue());

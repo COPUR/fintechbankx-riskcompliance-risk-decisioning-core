@@ -48,7 +48,7 @@ class OutboxRiskEventPublisherTest {
 
         ArgumentCaptor<List<OutboxEventJpaEntity>> rows = ArgumentCaptor.forClass(List.class);
         verify(outbox).saveAll(rows.capture());
-        assertThat(rows.getValue()).extracting(OutboxEventJpaEntity::getTopic).containsExactly("evt.rsk.risk.assessed.v1");
+        assertThat(rows.getValue()).extracting(OutboxEventJpaEntity::getTopic).containsExactly("evt.rsk.risk.v1");
         assertThat(rows.getValue()).extracting(OutboxEventJpaEntity::getAggregateId)
             .containsExactly(assessment.getId().getValue());
         assertThat(rows.getValue()).extracting(OutboxEventJpaEntity::getCorrelationId).containsOnly("corr-req");
