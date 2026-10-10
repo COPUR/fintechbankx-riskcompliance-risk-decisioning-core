@@ -56,7 +56,12 @@ bootstrap
 bootstrap
 
 echo "--- migrations as the owner (the migration Job)"
-psql_q -d "$db" -c "SET ROLE $owner" -c "CREATE SCHEMA $schema"
+# Flyway creates the schema and its history table as the connecting owner before the first migration;
+# V11 grants the runtime role SELECT on that table.
+psql_q -d "$db" -c "SET ROLE $owner" -c "CREATE SCHEMA $schema" -c "CREATE TABLE $schema.flyway_schema_history (
+  installed_rank integer PRIMARY KEY, version varchar(50), description varchar(200) NOT NULL,
+  type varchar(20) NOT NULL, script varchar(1000) NOT NULL, checksum integer, installed_by varchar(100) NOT NULL,
+  installed_on timestamp NOT NULL DEFAULT now(), execution_time integer NOT NULL, success boolean NOT NULL)"
 find "$root/risk-infrastructure/src/main/resources/db/migration" -name 'V*.sql' | sort -V | while read -r migration; do
   sed "s/\${runtime_role}/$runtime/g" "$migration" \
     | PGOPTIONS="-c search_path=$schema -c role=$owner" psql_q -d "$db" -f -
