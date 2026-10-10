@@ -10,15 +10,19 @@ import java.util.Map;
 
 /**
  * Turns risk domain events into the public envelope of the AsyncAPI contract
- * api/asyncapi/svc-rsk-decisioning.yaml: topic evt.rsk.risk.assessed.v1,
- * eventType Risk.RiskAssessment.Assessed.v1, key and aggregateId the
- * assessment id, money as a decimal string. No customer or counterparty data.
+ * api/asyncapi/svc-rsk-decisioning.yaml. Every event of the RiskAssessment
+ * aggregate goes to the one aggregate topic evt.rsk.risk.v1 (ADR-019); the
+ * event is named by its eventType (Risk.RiskAssessment.Assessed.v1), carried
+ * in the envelope and, by the relay, in the eventType record header. Key and
+ * aggregateId are the assessment id, money is a decimal string. No customer or
+ * counterparty data.
  */
 public class RiskEventEnvelopeFactory {
 
     public static final String PRODUCER = "svc-rsk-decisioning";
     public static final String AGGREGATE_TYPE = "RiskAssessment";
-    public static final String ASSESSED_TOPIC = "evt.rsk.risk.assessed.v1";
+    /** The aggregate topic, evt.rsk.risk.v&lt;topic major&gt;; independent of each eventType's major (ADR-019 section 5). */
+    public static final String TOPIC = "evt.rsk.risk.v1";
     public static final String ASSESSED_EVENT_TYPE = "Risk.RiskAssessment.Assessed.v1";
 
     /** Assessments are insert-only, so every event is about version 0. */
@@ -48,7 +52,7 @@ public class RiskEventEnvelopeFactory {
         envelope.put("data", mapped.data());
 
         return new OutboxEventJpaEntity(event.eventId(), AGGREGATE_TYPE, mapped.aggregateId(), AGGREGATE_VERSION,
-            mapped.eventType(), mapped.topic(), toJson(envelope), correlationId, event.occurredAt(), traceparent);
+            mapped.eventType(), TOPIC, toJson(envelope), correlationId, event.occurredAt(), traceparent);
     }
 
     static PublicEvent map(RiskDomainEvent event) {
@@ -67,7 +71,7 @@ public class RiskEventEnvelopeFactory {
                 data.put("assessedAt", e.assessedAt().toString());
                 // Optional in the contract; the attesting caller's id stays in the API.
                 data.put("attestationSource", e.attestationSource().name());
-                yield new PublicEvent(ASSESSED_TOPIC, ASSESSED_EVENT_TYPE, e.assessmentId().getValue(), data);
+                yield new PublicEvent(ASSESSED_EVENT_TYPE, e.assessmentId().getValue(), data);
             }
         };
     }
@@ -80,6 +84,6 @@ public class RiskEventEnvelopeFactory {
         }
     }
 
-    record PublicEvent(String topic, String eventType, String aggregateId, Map<String, Object> data) {
+    record PublicEvent(String eventType, String aggregateId, Map<String, Object> data) {
     }
 }

@@ -238,6 +238,13 @@ public class OutboxRelay {
             : cause.getClass().getSimpleName() + ": " + cause.getMessage();
     }
 
+    /**
+     * The record for one outbox row (ADR-019 sections 1 and 3): the row's topic,
+     * which is the aggregate topic evt.rsk.risk.v1 (V10 moved older pending rows),
+     * key = aggregateId, and UTF-8 headers eventType, eventId and correlationId
+     * (equal to the envelope fields), plus traceparent when the request was traced.
+     * Consumers route on the eventType header and skip types they do not handle.
+     */
     static ProducerRecord<String, String> toRecord(OutboxEventJpaEntity row) {
         ProducerRecord<String, String> record = new ProducerRecord<>(row.getTopic(), row.getAggregateId(), row.getPayload());
         record.headers().add("eventType", row.getEventType().getBytes(StandardCharsets.UTF_8));
