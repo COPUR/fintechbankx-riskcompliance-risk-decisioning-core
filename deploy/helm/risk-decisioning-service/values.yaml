@@ -44,9 +44,10 @@ podDisruptionBudget:
 # (cicd-templates 4f0f266). The platform's trust-manager Bundle publishes
 # ConfigMap rds-ca-bundle in every service namespace. The volume is not
 # optional: a missing bundle keeps the pod from starting instead of letting it
-# connect without verification. The path is also exported as DB_SSL_ROOT_CERT.
+# connect without verification. The path is also exported as DB_SSL_ROOT_CERT,
+# which turns on the service's DatabaseTlsGuard. There is no switch to turn it
+# off: this service always has a PostgreSQL database.
 databaseCa:
-  enabled: true
   configMapName: rds-ca-bundle
   key: global-bundle.pem
   mountPath: /etc/fintechbankx/rds-ca

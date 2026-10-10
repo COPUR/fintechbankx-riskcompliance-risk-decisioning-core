@@ -51,7 +51,8 @@ topic, and the topic major changes only for key, partition-count or cleanup chan
 Aurora TLS: `config.DB_URL` must use `sslmode=verify-full` (the Terraform `jdbc_url` output does, with
 `sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem`); the chart fails to render otherwise. It mounts ConfigMap
 `rds-ca-bundle` read-only at `/etc/fintechbankx/rds-ca` (not optional) and exports `DB_SSL_ROOT_CERT`
-(cicd-templates 4f0f266). Local, compose and test database URLs are unchanged.
+(cicd-templates 4f0f266), always: there is no switch to turn it off, as in compliance. Local, compose and test
+database URLs are unchanged.
 
 ## Known gaps
 

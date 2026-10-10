@@ -82,3 +82,7 @@ DatabaseTlsGuard repeats the URL checks at startup.
 {{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{- define "risk.databaseCaFile" -}}
+{{- printf "%s/%s" (trimSuffix "/" .Values.databaseCa.mountPath) .Values.databaseCa.key -}}
+{{- end -}}
