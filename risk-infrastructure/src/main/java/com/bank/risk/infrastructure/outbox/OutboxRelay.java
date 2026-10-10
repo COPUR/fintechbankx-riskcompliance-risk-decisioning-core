@@ -250,7 +250,6 @@ public class OutboxRelay {
         record.headers().add("eventType", row.getEventType().getBytes(StandardCharsets.UTF_8));
         record.headers().add("eventId", row.getEventId().toString().getBytes(StandardCharsets.UTF_8));
         record.headers().add("correlationId", row.getCorrelationId().getBytes(StandardCharsets.UTF_8));
-        record.headers().add("x-fapi-interaction-id", row.getCorrelationId().getBytes(StandardCharsets.UTF_8));
         if (row.getTraceparent() != null) {
             // W3C trace context, so the consumer's span joins the producer's trace.
             record.headers().add("traceparent", row.getTraceparent().getBytes(StandardCharsets.UTF_8));
