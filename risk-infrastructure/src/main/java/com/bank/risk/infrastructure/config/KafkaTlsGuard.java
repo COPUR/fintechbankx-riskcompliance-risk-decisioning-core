@@ -1,6 +1,7 @@
 package com.bank.risk.infrastructure.config;
 
 import java.util.Map;
+import java.util.Set;
 import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.kafka.KafkaProperties;
@@ -8,27 +9,28 @@ import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.core.env.Environment;
 
 /**
- * Kafka transport at startup, the sibling of {@link DatabaseTlsGuard}. On AWS
- * the outbox relay publishes decisions to Amazon MSK with IAM authentication,
- * which exists only over SASL_SSL (profile kafka-msk). A values override
- * (KAFKA_SECURITY_PROTOCOL, a producer-level property, a wrong profile) could
- * downgrade the producer to PLAINTEXT or to SSL without SASL, and the relay
- * would then publish unauthenticated or in clear. Before any Kafka bean
+ * Kafka transport at startup, the sibling of {@link DatabaseTlsGuard}. In a
+ * deployed environment the outbox relay publishes decisions over TLS:
+ * SASL_SSL to Amazon MSK with IAM authentication (profile kafka-msk) or SSL
+ * with the Strimzi KafkaUser client certificate (profile kafka-strimzi). A
+ * values override (KAFKA_SECURITY_PROTOCOL, a producer-level property, a
+ * wrong profile) could downgrade the producer to PLAINTEXT or SASL_PLAINTEXT,
+ * and the relay would then publish decisions in clear. Before any Kafka bean
  * exists, this guard builds the producer properties exactly as Spring Boot
  * does ({@link KafkaProperties#buildProducerProperties}: the producer's own
- * settings win over the common ones) and refuses to start unless the effective
- * {@code security.protocol} is {@value #REQUIRED_PROTOCOL}.
+ * settings win over the common ones) and refuses to start unless the
+ * effective {@code security.protocol} is one of {@link #ACCEPTED_PROTOCOLS}.
  *
  * <p>Registered by {@link KafkaTlsConfiguration} only when DB_SSL_ROOT_CERT is
- * set (the chart always sets it: an AWS environment with Aurora) and the relay
- * is on (risk.outbox.relay.enabled=true). Local runs and the Strimzi
- * mutual-TLS profile on a non-AWS cluster have no bundle, so the guard is off
- * for them.
+ * set (the chart always sets it from the mounted RDS CA bundle) and the relay
+ * is on ({@value #RELAY_PROPERTY}=true). Local runs and tests have neither,
+ * so the guard is off for them. Messages name the property and the value,
+ * never a broker address.
  */
 public final class KafkaTlsGuard implements BeanFactoryPostProcessor {
 
     static final String RELAY_PROPERTY = "risk.outbox.relay.enabled";
-    static final String REQUIRED_PROTOCOL = "SASL_SSL";
+    static final Set<String> ACCEPTED_PROTOCOLS = Set.of("SASL_SSL", "SSL");
 
     private static final String KAFKA_PREFIX = "spring.kafka";
     private static final String SECURITY_PROTOCOL = "security.protocol";
@@ -50,11 +52,11 @@ public final class KafkaTlsGuard implements BeanFactoryPostProcessor {
                 .orElseGet(KafkaProperties::new);
         Map<String, Object> producer = kafka.buildProducerProperties(null);
         Object protocol = producer.get(SECURITY_PROTOCOL);
-        if (!REQUIRED_PROTOCOL.equals(protocol)) {
-            throw new IllegalStateException(KAFKA_PREFIX + " producer " + SECURITY_PROTOCOL + " must be "
-                    + REQUIRED_PROTOCOL + " when the outbox relay is on and " + DatabaseTlsGuard.ROOT_CERT_PROPERTY
-                    + " is set (Amazon MSK with IAM authentication, profile kafka-msk), got "
-                    + (protocol == null ? "none (Kafka defaults to PLAINTEXT)" : protocol));
+        if (protocol == null || !ACCEPTED_PROTOCOLS.contains(protocol.toString())) {
+            throw new IllegalStateException(KAFKA_PREFIX + " producer " + SECURITY_PROTOCOL
+                    + " must be SASL_SSL or SSL when the outbox relay is on and " + DatabaseTlsGuard.ROOT_CERT_PROPERTY
+                    + " is set (Amazon MSK with IAM authentication, profile kafka-msk, or Strimzi mutual TLS, profile"
+                    + " kafka-strimzi), got " + (protocol == null ? "none (Kafka defaults to PLAINTEXT)" : protocol));
         }
     }
 }

@@ -8,9 +8,10 @@ import org.springframework.core.env.Environment;
 /**
  * Registers {@link KafkaTlsGuard} when the outbox relay is on and the chart
  * has mounted the RDS CA bundle (DB_SSL_ROOT_CERT is always set there, so the
- * service runs on AWS and must publish to MSK over SASL_SSL). With the relay
- * off nothing publishes; without the bundle (local runs, tests, the Strimzi
- * mutual-TLS profile on a non-AWS cluster) the guard stays off, as
+ * service is deployed and must publish over TLS: SASL_SSL to MSK with IAM,
+ * profile kafka-msk, or SSL with the Strimzi KafkaUser certificate, profile
+ * kafka-strimzi). With the relay off nothing publishes; without the bundle
+ * (local runs, tests) the guard stays off, as
  * {@link DatabaseTlsConfiguration}'s does.
  */
 @Configuration(proxyBeanMethods = false)
