@@ -66,7 +66,8 @@ config:
   SPRING_PROFILES_ACTIVE: kafka-msk
   OIDC_ISSUER_URI: ""
   OIDC_JWK_SET_URI: ""
-  # Outbox relay to evt.rsk.risk.*. Off until the mesh contract lists msk for
+  # Outbox relay to the aggregate topic evt.rsk.risk.v1 (ADR-019; the eventType
+  # header names the event). Off until the mesh contract lists msk for
   # risk-decisioning-service (allow-egress-msk generated for namespace risk) and
   # the topic exists; until then events stay in sc_rsk_decisioning.outbox_event.
   # Turn on with --set config.OUTBOX_RELAY_ENABLED=true (runbook step 4).

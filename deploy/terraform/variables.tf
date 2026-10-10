@@ -57,7 +57,7 @@ variable "kubernetes_service_account" {
 
 variable "msk_cluster_arn" {
   type        = string
-  description = "ARN of the platform MSK cluster the outbox relay publishes to (IAM auth). Empty grants no Kafka access."
+  description = "ARN of the platform MSK cluster the outbox relay publishes to (IAM auth); the role may write only the aggregate topic evt.rsk.risk.v1. Empty grants no Kafka access."
   default     = ""
 }
 

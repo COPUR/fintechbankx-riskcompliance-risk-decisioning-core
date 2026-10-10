@@ -207,7 +207,9 @@ data "aws_iam_policy_document" "workload" {
   count = var.msk_cluster_arn == "" ? 0 : 1
 
   # MSK IAM client auth (SASL_SSL / AWS_MSK_IAM): the outbox relay connects as
-  # an idempotent producer and may only write this service's event namespace.
+  # an idempotent producer and may only write the risk aggregate topic
+  # evt.rsk.risk.v1 (ADR-019: one topic per aggregate, events named by the
+  # eventType header). The service consumes nothing, so it has no DLQ to write.
   statement {
     sid       = "ConnectToEventCluster"
     actions   = ["kafka-cluster:Connect", "kafka-cluster:DescribeCluster", "kafka-cluster:WriteDataIdempotently"]
@@ -217,7 +219,7 @@ data "aws_iam_policy_document" "workload" {
   statement {
     sid       = "WriteOwnEventNamespace"
     actions   = ["kafka-cluster:DescribeTopic", "kafka-cluster:WriteData"]
-    resources = ["${replace(var.msk_cluster_arn, ":cluster/", ":topic/")}/evt.rsk.risk.*"]
+    resources = ["${replace(var.msk_cluster_arn, ":cluster/", ":topic/")}/evt.rsk.risk.v1"]
   }
 }
 
