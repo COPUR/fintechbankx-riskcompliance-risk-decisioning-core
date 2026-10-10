@@ -6,16 +6,17 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 
 /**
- * Registers {@link KafkaTlsGuard} when the outbox relay is on and the chart
- * has mounted the RDS CA bundle (DB_SSL_ROOT_CERT is always set there, so the
- * service is deployed and must publish over TLS: SASL_SSL to MSK with IAM,
+ * Registers {@link KafkaTlsGuard} when the chart has mounted the RDS CA
+ * bundle (DB_SSL_ROOT_CERT is always set there, so the service is deployed
+ * and its producer must be configured for TLS: SASL_SSL to MSK with IAM,
  * profile kafka-msk, or SSL with the Strimzi KafkaUser certificate, profile
- * kafka-strimzi). With the relay off nothing publishes; without the bundle
- * (local runs, tests) the guard stays off, as
- * {@link DatabaseTlsConfiguration}'s does.
+ * kafka-strimzi). The same condition as {@link DatabaseTlsConfiguration}'s,
+ * and nothing else: the outbox relay flag decides whether anything publishes,
+ * not whether the producer configuration is checked, so a PLAINTEXT producer
+ * is refused on the first rollout rather than on the one that switches the
+ * relay on. Without the bundle (local runs, tests) the guard stays off.
  */
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnProperty(name = KafkaTlsGuard.RELAY_PROPERTY, havingValue = "true")
 public class KafkaTlsConfiguration {
 
     /** Static: a BeanFactoryPostProcessor runs before any Kafka producer or relay bean exists. */

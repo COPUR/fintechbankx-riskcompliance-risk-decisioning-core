@@ -132,8 +132,8 @@ read; the image fixes them. LOGGING_LEVEL_* is refused because a log level is
 not an install-time value: LOGGING_LEVEL_ORG_POSTGRESQL=TRACE would write the
 wire protocol, with row data, to the pod log. DB_SSL_ROOT_CERT is refused,
 empty or not: it is the only switch of the TLS startup assertion
-(DatabaseTlsGuard, and KafkaTlsGuard when the relay is on, run whenever it is
-set), and the chart sets it from the mounted bundle on the Deployment and the
+(DatabaseTlsGuard and KafkaTlsGuard both run whenever it is set, relay on or
+off), and the chart sets it from the mounted bundle on the Deployment and the
 migration Job. SPRING_PROFILES_ACTIVE and SPRING_PROFILES_INCLUDE (also
 indexed) must not name the local profile (a developer machine with plain-text
 local services) in any case or position of the comma list. Each key is

@@ -10,7 +10,7 @@ import org.springframework.core.env.Environment;
 
 /**
  * Kafka transport at startup, the sibling of {@link DatabaseTlsGuard}. In a
- * deployed environment the outbox relay publishes decisions over TLS:
+ * deployed environment the outbox relay, once switched on, publishes decisions over TLS:
  * SASL_SSL to Amazon MSK with IAM authentication (profile kafka-msk) or SSL
  * with the Strimzi KafkaUser client certificate (profile kafka-strimzi). A
  * values override (KAFKA_SECURITY_PROTOCOL, a producer-level property, a
@@ -21,15 +21,15 @@ import org.springframework.core.env.Environment;
  * settings win over the common ones) and refuses to start unless the
  * effective {@code security.protocol} is one of {@link #ACCEPTED_PROTOCOLS}.
  *
- * <p>Registered by {@link KafkaTlsConfiguration} only when DB_SSL_ROOT_CERT is
- * set (the chart always sets it from the mounted RDS CA bundle) and the relay
- * is on ({@value #RELAY_PROPERTY}=true). Local runs and tests have neither,
- * so the guard is off for them. Messages name the property and the value,
- * never a broker address.
+ * <p>Registered by {@link KafkaTlsConfiguration} whenever DB_SSL_ROOT_CERT is
+ * set (the chart always sets it from the mounted RDS CA bundle), relay on or
+ * off, exactly like {@link DatabaseTlsGuard}: the relay flag decides whether
+ * anything publishes, not whether the producer is checked. Local runs and
+ * tests have no bundle, so the guard is off for them. Messages name the
+ * property and the value, never a broker address.
  */
 public final class KafkaTlsGuard implements BeanFactoryPostProcessor {
 
-    static final String RELAY_PROPERTY = "risk.outbox.relay.enabled";
     static final Set<String> ACCEPTED_PROTOCOLS = Set.of("SASL_SSL", "SSL");
 
     private static final String KAFKA_PREFIX = "spring.kafka";
@@ -54,7 +54,7 @@ public final class KafkaTlsGuard implements BeanFactoryPostProcessor {
         Object protocol = producer.get(SECURITY_PROTOCOL);
         if (protocol == null || !ACCEPTED_PROTOCOLS.contains(protocol.toString())) {
             throw new IllegalStateException(KAFKA_PREFIX + " producer " + SECURITY_PROTOCOL
-                    + " must be SASL_SSL or SSL when the outbox relay is on and " + DatabaseTlsGuard.ROOT_CERT_PROPERTY
+                    + " must be SASL_SSL or SSL when " + DatabaseTlsGuard.ROOT_CERT_PROPERTY
                     + " is set (Amazon MSK with IAM authentication, profile kafka-msk, or Strimzi mutual TLS, profile"
                     + " kafka-strimzi), got " + (protocol == null ? "none (Kafka defaults to PLAINTEXT)" : protocol));
         }
