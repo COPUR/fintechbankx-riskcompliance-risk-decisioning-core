@@ -25,7 +25,8 @@ done
 psql_q -d "$src_db" -f "$root/db/backfill/test/monolith_fixture.sql"
 
 psql_q -d "$dst_db" -c "CREATE SCHEMA $schema"
-for migration in "$root"/risk-infrastructure/src/main/resources/db/migration/V*.sql; do
+# Version order, as Flyway applies them: a shell glob puts V10 before V2.
+find "$root/risk-infrastructure/src/main/resources/db/migration" -name 'V*.sql' | sort -V | while read -r migration; do
   PGOPTIONS="-c search_path=$schema" psql_q -d "$dst_db" -f "$migration"
 done
 
