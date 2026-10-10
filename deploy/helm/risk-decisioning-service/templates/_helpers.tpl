@@ -35,20 +35,35 @@ ConfigMap exports every config key, so a second URL there (SPRING_DATASOURCE_*UR
 SPRING_FLYWAY_URL, SPRING_APPLICATION_JSON) would override DB_URL and is refused
 too, and so is a config location or import (SPRING_CONFIG_IMPORT,
 SPRING_CONFIG_ADDITIONAL_LOCATION, SPRING_CONFIG_LOCATION, also indexed), which
-loads a file or configtree that can set the URL. Keys are compared in the
-spelling Spring's relaxed binding reads from the environment: upper case, "."
-and "-" as "_", and ADDITIONALLOCATION as well as ADDITIONAL_LOCATION. The application's
-DatabaseTlsGuard repeats the URL checks at startup.
+loads a file or configtree that can set the URL. JVM option variables
+(JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, _JAVA_OPTIONS, JAVA_OPTS) are refused
+because they set system properties or load an agent before application.yml is
+read; the image fixes them. LOGGING_LEVEL_* is refused because a log level is
+not an install-time value: LOGGING_LEVEL_ORG_POSTGRESQL=TRACE would write the
+wire protocol, with row data, to the pod log. Each key is normalised before
+matching, the way Spring's relaxed binding reads it from the environment: upper
+case, then every non-alphanumeric character dropped, so dash, dot, underscore
+and index spellings (spring.config.import[0], SPRING_CONFIG_IMPORT_0) all
+match. The chart renders no Spring config import of its own; a configtree would
+be allowed only as a chart-rendered value on the fixed mount
+optional:configtree:/etc/fintechbankx/config/, never from a values key. The
+application's DatabaseTlsGuard repeats the URL checks at startup.
 */}}
 {{- define "risk.validateDatabaseTls" -}}
 {{- $bundle := "/etc/fintechbankx/rds-ca/global-bundle.pem" -}}
 {{- range $key, $_ := .Values.config -}}
-{{- $name := upper (replace "-" "_" (replace "." "_" (toString $key))) -}}
-{{- if regexMatch "^SPRING_(DATASOURCE_.*URL|DATASOURCE_HIKARI_DATA_?SOURCE_?PROPERTIES.*|FLYWAY_URL|APPLICATION_JSON)$" $name -}}
+{{- $name := upper (regexReplaceAll "[^A-Za-z0-9]" (toString $key) "") -}}
+{{- if regexMatch "^SPRING(DATASOURCE.*URL|DATASOURCEHIKARIDATASOURCEPROPERTIES.*|FLYWAYURL|APPLICATIONJSON)$" $name -}}
 {{- fail (printf "config.%s must not be set: config.DB_URL is the only database URL (sslmode=verify-full)" $key) -}}
 {{- end -}}
-{{- if regexMatch "^SPRING_CONFIG_(IMPORT|ADDITIONAL_?LOCATION|LOCATION)([_\\[].*)?$" $name -}}
+{{- if regexMatch "^SPRINGCONFIG(IMPORT|ADDITIONALLOCATION|LOCATION)[0-9]*$" $name -}}
 {{- fail (printf "config.%s must not be set: it loads configuration that can override config.DB_URL" $key) -}}
+{{- end -}}
+{{- if regexMatch "^(JAVATOOLOPTIONS|JDKJAVAOPTIONS|JAVAOPTIONS|JAVAOPTS)$" $name -}}
+{{- fail (printf "config.%s must not be set: JVM options are fixed by the image" $key) -}}
+{{- end -}}
+{{- if hasPrefix "LOGGINGLEVEL" $name -}}
+{{- fail (printf "config.%s must not be set: log levels are not install-time values" $key) -}}
 {{- end -}}
 {{- end -}}
 {{- $url := toString (default "" (index .Values.config "DB_URL")) -}}

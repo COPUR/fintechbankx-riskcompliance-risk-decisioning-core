@@ -58,8 +58,10 @@ config:
   #   ?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
   # The render fails unless sslmode=verify-full and that sslrootcert each appear exactly once
   # and no sslfactory, sslhostnameverifier or sslpasswordcallback is set; no other config key
-  # may carry a database URL (SPRING_DATASOURCE_*URL, SPRING_FLYWAY_URL, SPRING_APPLICATION_JSON), and none may set
-  # SPRING_CONFIG_IMPORT, SPRING_CONFIG_ADDITIONAL_LOCATION or SPRING_CONFIG_LOCATION.
+  # may carry a database URL (SPRING_DATASOURCE_*URL, SPRING_FLYWAY_URL, SPRING_APPLICATION_JSON), none may set
+  # SPRING_CONFIG_IMPORT, SPRING_CONFIG_ADDITIONAL_LOCATION or SPRING_CONFIG_LOCATION, none may set JVM options
+  # (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, _JAVA_OPTIONS, JAVA_OPTS) and none may set a LOGGING_LEVEL_*. Keys are
+  # matched in every spelling (case, dash, dot, underscore, index) Spring's relaxed binding accepts.
   DB_URL: ""
   DB_USERNAME: risk_decisioning_app
   DB_POOL_MAX: "10"
