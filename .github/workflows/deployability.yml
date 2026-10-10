@@ -102,6 +102,12 @@ jobs:
             reject_render "config.${key//\\/} must not be set: config.DB_URL is the only database URL" \
               --set "config.$key=$base?sslmode=disable"
           done
+          # SPRING_FLYWAY_LOCATIONS would point validate-at-start at another migration set (an empty one validates
+          # nothing), so a pending or changed migration would no longer keep a pod from starting.
+          reject_render "config.SPRING_FLYWAY_LOCATIONS must not be set: config.DB_URL is the only database URL" \
+            --set config.SPRING_FLYWAY_LOCATIONS=classpath:nowhere
+          reject_render "config.spring.flyway.locations must not be set: config.DB_URL is the only database URL" \
+            --set 'config.spring\.flyway\.locations=classpath:nowhere'
           # Spring config locations and imports load property sources that can override DB_URL
           # (spring.datasource.url from a file or configtree), in every relaxed spelling.
           for key in SPRING_CONFIG_IMPORT 'spring\.config\.import' SPRING_CONFIG_IMPORT_0 \
