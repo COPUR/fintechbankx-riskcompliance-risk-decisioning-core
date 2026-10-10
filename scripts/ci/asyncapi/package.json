@@ -2,7 +2,7 @@
   "name": "risk-asyncapi-breaking-gate",
   "version": "0.0.0",
   "private": true,
-  "description": "AsyncAPI breaking-change gate, copied unchanged from the asyncapi catalog (b0e31ee).",
+  "description": "AsyncAPI breaking-change gate, copied unchanged from the asyncapi catalog (44837cc).",
   "type": "module",
   "engines": {
     "node": ">=22"

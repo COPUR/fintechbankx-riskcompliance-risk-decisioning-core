@@ -173,7 +173,7 @@ jobs:
           ASYNCAPI_DIR: api/asyncapi
         shell: bash
         run: |
-          # Catalog gate (ADR-019 section 5), copied unchanged from asyncapi-catalog b0e31ee, invoked as the
+          # Catalog gate (ADR-019 section 5), copied unchanged from asyncapi-catalog 44837cc, invoked as the
           # catalog's scripts/ci/asyncapi-breaking.sh does (from the repository root, ASYNCAPI_DIR for the layout).
           npm ci --prefix scripts/ci/asyncapi --no-audit --no-fund
           node scripts/ci/asyncapi/asyncapi-breaking.mjs

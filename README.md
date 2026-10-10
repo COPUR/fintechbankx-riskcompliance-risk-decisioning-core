@@ -51,7 +51,7 @@ Bu repository, FinTechBankX DDD/EDA dönüşümünde **svc-rsk-decisioning** ser
 | Run locally | `SPRING_DATASOURCE_PASSWORD=... ./gradlew :risk-bootstrap:bootRun` |
 | Database migrations | `risk-infrastructure/src/main/resources/db/migration` (schema `sc_rsk_decisioning`) |
 | API contract | [api/openapi/risk-context.yaml](api/openapi/risk-context.yaml) |
-| Event contract | [api/asyncapi/svc-rsk-decisioning.yaml](api/asyncapi/svc-rsk-decisioning.yaml) (validate: `npx -y @asyncapi/cli@2.13.0 validate api/asyncapi/svc-rsk-decisioning.yaml`). Breaking-change gate in `ci/test` (ADR-019 section 5): `npm ci --prefix scripts/ci/asyncapi && ASYNCAPI_DIR=api/asyncapi node scripts/ci/asyncapi/asyncapi-breaking.mjs` compares with `origin/main`. `asyncapi-breaking.mjs` and `lib/` are copied unchanged from the asyncapi catalog (b0e31ee). The shared CI template carries the gate in cicd-templates #11 (6bd961a, `publishes-events: true`); this hand-rolled step stays until #11 merges |
+| Event contract | [api/asyncapi/svc-rsk-decisioning.yaml](api/asyncapi/svc-rsk-decisioning.yaml) (validate: `npx -y @asyncapi/cli@2.13.0 validate api/asyncapi/svc-rsk-decisioning.yaml`). Breaking-change gate in `ci/test` (ADR-019 section 5): `npm ci --prefix scripts/ci/asyncapi && ASYNCAPI_DIR=api/asyncapi node scripts/ci/asyncapi/asyncapi-breaking.mjs` compares with `origin/main`. `asyncapi-breaking.mjs` and `lib/` are copied unchanged from the asyncapi catalog (44837cc). The shared CI template carries the gate in cicd-templates #11 (6bd961a, `publishes-events: true`); this hand-rolled step stays until #11 merges |
 | Container image | `docker build -t risk-decisioning-service .` |
 | Kubernetes | `deploy/helm/risk-decisioning-service` |
 | AWS infrastructure | `deploy/terraform` |
