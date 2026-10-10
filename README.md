@@ -48,15 +48,15 @@ Bu repository, FinTechBankX DDD/EDA dönüşümünde **svc-rsk-decisioning** ser
 | What | Command / path |
 |---|---|
 | Unit and integration tests | `./gradlew test` (integration tests need `TEST_DB_URL` or Docker) |
-| Run locally | `SPRING_DATASOURCE_PASSWORD=... ./gradlew :risk-bootstrap:bootRun` |
-| Database migrations | `risk-infrastructure/src/main/resources/db/migration` (schema `sc_rsk_decisioning`) |
+| Run locally | Migrate first, then start: `SPRING_DATASOURCE_PASSWORD=... ./gradlew :risk-bootstrap:bootRun --args=migrate` once per new migration (or `java -jar risk-bootstrap/build/libs/risk-decisioning-service.jar migrate`), then the same command without `--args`. The service only validates the schema and refuses to start on an empty or unmigrated database ([decision 0002](docs/architecture/decisions/0002-flyway-runs-in-a-migration-job.md)); the relay is off by default (`OUTBOX_RELAY_ENABLED=true` with Kafka on `localhost:9092` to publish) |
+| Database migrations | `risk-infrastructure/src/main/resources/db/migration` (schema `sc_rsk_decisioning`), applied by the chart's pre-install/pre-upgrade Job as the schema owner, never by the service pods; the pods connect as the runtime role V11 grants |
 | API contract | [api/openapi/risk-context.yaml](api/openapi/risk-context.yaml) |
 | Event contract | [api/asyncapi/svc-rsk-decisioning.yaml](api/asyncapi/svc-rsk-decisioning.yaml) (validate: `npx -y @asyncapi/cli@2.13.0 validate api/asyncapi/svc-rsk-decisioning.yaml`). Breaking-change gate in `ci/test` (ADR-019 section 5): `npm ci --prefix scripts/ci/asyncapi && ASYNCAPI_DIR=api/asyncapi node scripts/ci/asyncapi/asyncapi-breaking.mjs` compares with `origin/main`. `asyncapi-breaking.mjs` and `lib/` are copied unchanged from the asyncapi catalog (44837cc). The shared CI template carries the gate in cicd-templates #11 (6bd961a, `publishes-events: true`); this hand-rolled step stays until #11 merges |
 | Container image | `docker build -t risk-decisioning-service .` |
 | Kubernetes | `deploy/helm/risk-decisioning-service` |
 | AWS infrastructure | `deploy/terraform` |
 | Data split from the monolith | [RUNBOOK-EXTRACT-rsk-decisioning](docs/migration/RUNBOOK-EXTRACT-rsk-decisioning.md) |
-| Decisions | [ADR 0001: risk facts are caller-attested](docs/architecture/decisions/0001-risk-facts-are-caller-attested.md) (Proposed) |
+| Decisions | [ADR 0001: risk facts are caller-attested](docs/architecture/decisions/0001-risk-facts-are-caller-attested.md), [ADR 0002: Flyway runs in a migration Job](docs/architecture/decisions/0002-flyway-runs-in-a-migration-job.md) (both Proposed) |
 | Deployment and Well-Architected mapping | [DEPLOYMENT_AND_WELL_ARCHITECTED](docs/architecture/DEPLOYMENT_AND_WELL_ARCHITECTED.md) |
 
 ## Calling the service

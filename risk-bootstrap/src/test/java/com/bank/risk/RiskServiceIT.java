@@ -27,9 +27,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Boots the whole service against PostgreSQL: Flyway builds
- * sc_rsk_decisioning, Hibernate validates the entity against it, and a
- * payment service assesses transactions over HTTP.
+ * Boots the whole service against PostgreSQL: the test context migrates
+ * sc_rsk_decisioning as the schema owner (what the chart's migration Job does;
+ * the service itself only validates), Hibernate validates the entity against
+ * it, and a payment service assesses transactions over HTTP as the runtime role.
  */
 @SpringBootTest(properties = "risk.outbox.relay.enabled=false")
 @AutoConfigureMockMvc
