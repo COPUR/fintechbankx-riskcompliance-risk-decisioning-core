@@ -85,12 +85,8 @@ class RiskEventsAsyncApiContractTest {
         assertThat(data.fieldNames()).toIterable()
             .containsAll(this.<List<String>>at(dataSchema, "required"))
             .allMatch(field -> this.<Map<String, Object>>at(dataSchema, "properties").containsKey(field));
-        // The spec stays 1.0.0 until it first lands on the catalog's main (governance change rules);
-        // the optional attestationSource ships in 1.0.0, so no "since" history in descriptions.
-        String version = at(contract, "info", "version");
-        assertThat(version).isEqualTo("1.0.0");
-        assertThat(address).as("topic suffix .vN matches the contract major")
-            .endsWith(".v" + version.substring(0, version.indexOf('.')));
+        // The optional attestationSource ships in the pre-release 1.0.0 (theContractVersionIsPreReleaseAndNamesTheTopicMajor),
+        // so no "since" history in descriptions.
         assertThat(this.<String>at(dataSchema, "properties", "attestationSource", "description"))
             .doesNotContainIgnoringCase("since");
         assertThat(this.<List<String>>at(dataSchema, "required")).doesNotContain("attestationSource");
@@ -109,6 +105,30 @@ class RiskEventsAsyncApiContractTest {
         data.get("reasons").forEach(reason -> assertThat(reason.asText()).matches(reasonPattern));
         // rsk-policy-v3 reason codes are additive: the 1.0.0 pattern already accepts them.
         assertThat(List.of("SUSPICIOUS_ROUND_AMOUNT", "SUSPICIOUS_MOBILE_AMOUNT")).allMatch(code -> code.matches(reasonPattern));
+    }
+
+    /**
+     * The spec is pre-release (Proposed, not yet on the catalog's main), so info.version
+     * stays exactly 1.0.0 until then: a change before the first catalog merge edits
+     * 1.0.0 in place (ADR-019 section 5). The topic suffix names the same major. Both a
+     * minor bump (1.1.0) and a major bump (2.0.0) on the .v1 topic fail here.
+     */
+    @Test
+    void theContractVersionIsPreReleaseAndNamesTheTopicMajor() throws IOException {
+        Map<String, Object> contract = load("svc-rsk-decisioning.yaml");
+        String version = at(contract, "info", "version");
+        String address = at(contract, "channels", "risk", "address");
+
+        assertThat(version).as("info.version is MAJOR.MINOR.PATCH").matches("\\d+\\.\\d+\\.\\d+");
+        String[] parts = version.split("\\.");
+        int major = Integer.parseInt(parts[0]), minor = Integer.parseInt(parts[1]), patch = Integer.parseInt(parts[2]);
+        assertThat(address).as("the topic suffix .vN is the contract major %s", version).endsWith(".v" + major);
+        assertThat(major).as("pre-release contract on %s: major stays 1 (a new topic major is a new .vN topic)", address)
+            .isEqualTo(1);
+        assertThat(minor).as("pre-release contract: no minor bump before the catalog first merges 1.0.0, got %s", version)
+            .isZero();
+        assertThat(patch).as("pre-release contract: no patch bump before the catalog first merges 1.0.0, got %s", version)
+            .isZero();
     }
 
     private String pattern(Map<String, Object> schema, String property) {
