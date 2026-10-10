@@ -428,6 +428,14 @@ jobs:
           reject_render "externalSecret.migrationSecretName is required" --set externalSecret.migrationSecretName=
           reject_render "externalSecret.migrationSecretName must be <env>/risk-decisioning-service/" \
             --set externalSecret.migrationSecretName=ci/other-service/db-migration
+          # ...and it must be another secret than the runtime one: a single credential for both would run Flyway
+          # and the service as the same role, and V11's insert-only grants (decision 0002) would not hold.
+          # Compared trimmed and without a trailing "/", so a spelling variant of the same name is refused too.
+          single_user="externalSecret.migrationSecretName must not be the runtime secret (externalSecret.remoteSecretName)"
+          reject_render "$single_user" --set externalSecret.migrationSecretName=ci/risk-decisioning-service/db-app
+          reject_render "$single_user" --set externalSecret.remoteSecretName=ci/risk-decisioning-service/db-migration
+          reject_render "$single_user" --set externalSecret.migrationSecretName=ci/risk-decisioning-service/db-app/
+          reject_render "$single_user" --set 'externalSecret.migrationSecretName= ci/risk-decisioning-service/db-app '
           ./scripts/ci/check-migration-job.py "$sa" <<<"$rendered"
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args | ./scripts/ci/check-migration-job.py "$sa"
           grep -q "secretKey: DB_MIGRATION_USERNAME" <<<"$rendered"
