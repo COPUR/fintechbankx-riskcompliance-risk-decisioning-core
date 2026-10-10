@@ -28,8 +28,9 @@ sslmode=require encrypts but trusts any certificate.
 The query after the first "?" is read the way PgJDBC reads it (split on "&",
 name before the first "="). PgJDBC lets the last of repeated parameters win,
 so sslmode and sslrootcert must each appear exactly once; a custom sslfactory,
-sslhostnameverifier or sslpasswordcallback would replace the verification, and
-a percent-encoded name would be decoded by the driver after this check. The
+sslhostnameverifier or sslpasswordcallback would replace the verification.
+Values are compared undecoded (PgJDBC decodes values, not names), so an encoded
+value fails closed. The
 ConfigMap exports every config key, so a second URL there (SPRING_DATASOURCE_*URL,
 SPRING_FLYWAY_URL, SPRING_APPLICATION_JSON, in any spelling Spring's relaxed
 binding accepts) would override DB_URL and is refused too. The application's
@@ -58,9 +59,7 @@ DatabaseTlsGuard repeats the URL checks at startup.
 {{- $kv := splitn "=" 2 $param -}}
 {{- $k := $kv._0 -}}
 {{- $v := toString (default "" $kv._1) -}}
-{{- if contains "%" $k -}}
-{{- fail (printf "config.DB_URL must not percent-encode parameter names (%s)" $k) -}}
-{{- else if eq $k "sslmode" -}}
+{{- if eq $k "sslmode" -}}
 {{- $sslmode = append $sslmode $v -}}
 {{- else if eq $k "sslrootcert" -}}
 {{- $rootcert = append $rootcert $v -}}
