@@ -109,8 +109,10 @@ class RiskOutboxIT {
 
     @BeforeEach
     void cleanTables() {
-        jdbc.update("delete from " + OUTBOX);
-        jdbc.update("delete from " + ASSESSMENTS);
+        // As the migration owner: the runtime role the service connects as may not DELETE decisions of record.
+        JdbcTemplate owner = PostgresTestDatabase.owner();
+        owner.update("delete from " + OUTBOX);
+        owner.update("delete from " + ASSESSMENTS);
     }
 
     @Test
@@ -203,32 +205,39 @@ class RiskOutboxIT {
     @Test
     void v10MovesUnpublishedRowsToTheAggregateTopicAndLeavesPublishedRowsAlone() throws Exception {
         String schema = "sc_rsk_v10_probe";
-        jdbc.execute("drop schema if exists " + schema + " cascade");
+        // As the migration owner, the way the Job runs them; the runtime role can neither create the schema nor
+        // see the probe tables before the grants migration has run there.
+        DataSource ownerDataSource = PostgresTestDatabase.ownerDataSource();
+        JdbcTemplate owner = new JdbcTemplate(ownerDataSource);
+        Map<String, String> placeholders = Map.of("runtime_role", PostgresTestDatabase.RUNTIME_ROLE);
+        owner.execute("drop schema if exists " + schema + " cascade");
         try {
-            org.flywaydb.core.Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema)
+            org.flywaydb.core.Flyway.configure().dataSource(ownerDataSource).schemas(schema).defaultSchema(schema)
+                .placeholders(placeholders)
                 .createSchemas(true).locations("classpath:db/migration").target("9").load().migrate();
             String insert = "insert into " + schema + ".outbox_event (event_id, aggregate_type, aggregate_id, aggregate_version,"
                 + " event_type, topic, payload, correlation_id, occurred_at, published_at, parked_at)"
                 + " values (?::uuid, 'RiskAssessment', ?, 0, 'Risk.RiskAssessment.Assessed.v1', 'evt.rsk.risk.assessed.v1',"
                 + " '{}'::jsonb, 'corr-v10', now(), ?, ?)";
             java.sql.Timestamp now = java.sql.Timestamp.from(java.time.Instant.now());
-            jdbc.update(insert, "00000000-0000-4000-8000-000000000001", "RISK-PENDING", null, null);
-            jdbc.update(insert, "00000000-0000-4000-8000-000000000002", "RISK-PARKED", null, now);
-            jdbc.update(insert, "00000000-0000-4000-8000-000000000003", "RISK-SENT", now, null);
+            owner.update(insert, "00000000-0000-4000-8000-000000000001", "RISK-PENDING", null, null);
+            owner.update(insert, "00000000-0000-4000-8000-000000000002", "RISK-PARKED", null, now);
+            owner.update(insert, "00000000-0000-4000-8000-000000000003", "RISK-SENT", now, null);
 
-            org.flywaydb.core.Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema)
+            org.flywaydb.core.Flyway.configure().dataSource(ownerDataSource).schemas(schema).defaultSchema(schema)
+                .placeholders(placeholders)
                 .locations("classpath:db/migration").load().migrate();
 
             Map<String, String> topics = new java.util.HashMap<>();
-            jdbc.query("select aggregate_id, topic from " + schema + ".outbox_event",
+            owner.query("select aggregate_id, topic from " + schema + ".outbox_event",
                 rs -> { topics.put(rs.getString(1), rs.getString(2)); });
             assertThat(topics).containsEntry("RISK-PENDING", "evt.rsk.risk.v1")
                 .containsEntry("RISK-PARKED", "evt.rsk.risk.v1")
                 .containsEntry("RISK-SENT", "evt.rsk.risk.assessed.v1");
-            assertThat(jdbc.queryForObject("select max(version::int) from " + schema + ".flyway_schema_history",
+            assertThat(owner.queryForObject("select max(version::int) from " + schema + ".flyway_schema_history",
                 Integer.class)).isGreaterThanOrEqualTo(10);
         } finally {
-            jdbc.execute("drop schema if exists " + schema + " cascade");
+            owner.execute("drop schema if exists " + schema + " cascade");
         }
     }
 

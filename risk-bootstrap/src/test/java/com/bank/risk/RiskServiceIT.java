@@ -50,8 +50,10 @@ class RiskServiceIT {
 
     @BeforeEach
     void cleanTables() {
-        jdbc.update("delete from sc_rsk_decisioning.outbox_event");
-        jdbc.update("delete from sc_rsk_decisioning.risk_assessment");
+        // As the migration owner: the runtime role the service connects as may not DELETE decisions of record.
+        JdbcTemplate owner = PostgresTestDatabase.owner();
+        owner.update("delete from sc_rsk_decisioning.outbox_event");
+        owner.update("delete from sc_rsk_decisioning.risk_assessment");
     }
 
     /** V5: a decision of record always names its attestation source and who attested it. */
@@ -83,6 +85,53 @@ class RiskServiceIT {
             """, String.class);
 
         assertThat(tables).containsExactly("legacy_credit_risk_assessment", "outbox_event", "risk_assessment");
+    }
+
+    /**
+     * The service connects as a runtime role, not as the schema owner that
+     * Flyway migrates with: it may read and insert decisions of record and
+     * work the outbox, but not change or remove a decision, change the schema,
+     * write the credit risk history or record a migration.
+     */
+    @Test
+    void theRuntimeRoleCanOnlyReadAndInsertDecisionsAndWorkTheOutbox() throws Exception {
+        assess("PAY-RUNTIME", "100.00", false, 0).andExpect(status().isCreated());
+        assertThat(jdbc.queryForObject("select current_user", String.class)).isEqualTo(PostgresTestDatabase.RUNTIME_ROLE);
+        JdbcTemplate runtime = PostgresTestDatabase.runtime();
+
+        assertThatThrownBy(() -> runtime.update(
+                "update sc_rsk_decisioning.risk_assessment set decision = 'ALLOW' where transaction_id = 'PAY-RUNTIME'"))
+            .rootCause().hasMessageContaining("permission denied for table risk_assessment");
+        assertThatThrownBy(() -> runtime.update(
+                "delete from sc_rsk_decisioning.risk_assessment where transaction_id = 'PAY-RUNTIME'"))
+            .rootCause().hasMessageContaining("permission denied for table risk_assessment");
+        assertThatThrownBy(() -> runtime.execute("truncate sc_rsk_decisioning.risk_assessment"))
+            .rootCause().hasMessageContaining("permission denied for table risk_assessment");
+        assertThatThrownBy(() -> runtime.execute(
+                "alter table sc_rsk_decisioning.risk_assessment drop constraint uq_risk_assessment_transaction"))
+            .rootCause().hasMessageContaining("must be owner of table risk_assessment");
+        assertThatThrownBy(() -> runtime.update(
+                "insert into sc_rsk_decisioning.legacy_credit_risk_assessment (assessment_id) values ('RA-RUNTIME')"))
+            .rootCause().hasMessageContaining("permission denied for table legacy_credit_risk_assessment");
+        assertThatThrownBy(() -> runtime.execute("create table sc_rsk_decisioning.shadow (id int)"))
+            .rootCause().hasMessageContaining("permission denied for schema sc_rsk_decisioning");
+        // The service validates the schema history at startup, so it may read but never write it.
+        assertThat(runtime.queryForObject(
+                "select count(*) from sc_rsk_decisioning.flyway_schema_history where success", Integer.class))
+            .isGreaterThanOrEqualTo(11);
+        assertThatThrownBy(() -> runtime.update(
+                "insert into sc_rsk_decisioning.flyway_schema_history (installed_rank, version, description, type,"
+                    + " script, checksum, installed_by, execution_time, success)"
+                    + " values (9999, '9999', 'forged', 'SQL', 'V9999__forged.sql', 0, current_user, 0, true)"))
+            .rootCause().hasMessageContaining("permission denied for table flyway_schema_history");
+        // The outbox is the relay's work queue: it marks, parks and purges rows.
+        runtime.update("update sc_rsk_decisioning.outbox_event set attempts = attempts where aggregate_type = 'RiskAssessment'");
+        assertThat(runtime.update("delete from sc_rsk_decisioning.outbox_event where published_at < now() - interval '1 year'"))
+            .isZero();
+
+        assertThat(runtime.queryForObject(
+                "select decision from sc_rsk_decisioning.risk_assessment where transaction_id = 'PAY-RUNTIME'", String.class))
+            .isEqualTo("ALLOW");
     }
 
     /** rsk-policy-v3: the payment type is a fact of the decision of record; a retry must repeat it. */
