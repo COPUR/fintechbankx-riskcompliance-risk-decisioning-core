@@ -32,8 +32,12 @@ sslhostnameverifier or sslpasswordcallback would replace the verification.
 Values are compared undecoded (PgJDBC decodes values, not names), so an encoded
 value fails closed. The
 ConfigMap exports every config key, so a second URL there (SPRING_DATASOURCE_*URL,
-SPRING_FLYWAY_URL, SPRING_APPLICATION_JSON, in any spelling Spring's relaxed
-binding accepts) would override DB_URL and is refused too. The application's
+SPRING_FLYWAY_URL, SPRING_APPLICATION_JSON) would override DB_URL and is refused
+too, and so is a config location or import (SPRING_CONFIG_IMPORT,
+SPRING_CONFIG_ADDITIONAL_LOCATION, SPRING_CONFIG_LOCATION, also indexed), which
+loads a file or configtree that can set the URL. Keys are compared in the
+spelling Spring's relaxed binding reads from the environment: upper case, "."
+and "-" as "_", and ADDITIONALLOCATION as well as ADDITIONAL_LOCATION. The application's
 DatabaseTlsGuard repeats the URL checks at startup.
 */}}
 {{- define "risk.validateDatabaseTls" -}}
@@ -42,6 +46,9 @@ DatabaseTlsGuard repeats the URL checks at startup.
 {{- $name := upper (replace "-" "_" (replace "." "_" (toString $key))) -}}
 {{- if regexMatch "^SPRING_(DATASOURCE_.*URL|DATASOURCE_HIKARI_DATA_?SOURCE_?PROPERTIES.*|FLYWAY_URL|APPLICATION_JSON)$" $name -}}
 {{- fail (printf "config.%s must not be set: config.DB_URL is the only database URL (sslmode=verify-full)" $key) -}}
+{{- end -}}
+{{- if regexMatch "^SPRING_CONFIG_(IMPORT|ADDITIONAL_?LOCATION|LOCATION)([_\\[].*)?$" $name -}}
+{{- fail (printf "config.%s must not be set: it loads configuration that can override config.DB_URL" $key) -}}
 {{- end -}}
 {{- end -}}
 {{- $url := toString (default "" (index .Values.config "DB_URL")) -}}

@@ -39,7 +39,7 @@ The backfill is independent of the other contexts' backfills and can be re-run u
 
 ## 3. Cutover plan
 
-Deployment prerequisite (Aurora TLS): `config.DB_URL` carries `sslmode=verify-full` and `sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem` exactly once each and no `sslfactory`, `sslhostnameverifier` or `sslpasswordcallback`, and no other config key holds a database URL (`SPRING_DATASOURCE_*URL`, `SPRING_FLYWAY_URL`, `SPRING_APPLICATION_JSON`); the chart refuses to render otherwise, and with `DB_SSL_ROOT_CERT` set (always, in the chart) the service's `DatabaseTlsGuard` refuses to start on any datasource or Flyway URL that PgJDBC would not verify against that bundle.
+Deployment prerequisite (Aurora TLS): `config.DB_URL` carries `sslmode=verify-full` and `sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem` exactly once each and no `sslfactory`, `sslhostnameverifier` or `sslpasswordcallback`, and no other config key holds a database URL (`SPRING_DATASOURCE_*URL`, `SPRING_FLYWAY_URL`, `SPRING_APPLICATION_JSON`), and none sets a Spring config location or import that could load another URL (`SPRING_CONFIG_IMPORT`, `SPRING_CONFIG_ADDITIONAL_LOCATION`, `SPRING_CONFIG_LOCATION`, in any relaxed spelling); the chart refuses to render otherwise, and with `DB_SSL_ROOT_CERT` set (always, in the chart) the service's `DatabaseTlsGuard` refuses to start on any datasource or Flyway URL that PgJDBC would not verify against that bundle.
 
 | Step | Action | Rollback |
 |---|---|---|
