@@ -57,10 +57,10 @@ class DatabaseTlsGuardTest {
     }
 
     @Test
-    void readsPercentEncodedParameterNamesAsTheDriverDoes() {
-        assertThatThrownBy(() -> guard(VALID + "&ssl%6Dode=disable").verify())
+    void readsPercentEncodedValuesDecodedAsTheDriverDoes() {
+        assertThatThrownBy(() -> guard(BASE + "?sslmode=verify-full&sslrootcert=%2Ftmp%2Fdecoy.pem").verify())
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("spring.datasource.url must use sslmode=verify-full");
+                .hasMessageContaining("spring.datasource.url must use sslrootcert=" + BUNDLE);
     }
 
     @Test
@@ -120,7 +120,7 @@ class DatabaseTlsGuardTest {
                 .withPropertyValues("DB_SSL_ROOT_CERT=" + BUNDLE,
                         "spring.datasource.url=" + BASE + "?sslmode=require&applicationName=sslmode=verify-full")
                 .run(context -> assertThat(context).hasFailed()
-                        .getFailure().rootCause().hasMessageContaining("sslmode=verify-full"));
+                        .getFailure().hasMessageContaining("spring.datasource.url must use sslmode=verify-full"));
     }
 
     @Test
