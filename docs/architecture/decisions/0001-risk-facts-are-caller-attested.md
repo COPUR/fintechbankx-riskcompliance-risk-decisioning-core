@@ -44,8 +44,8 @@ stated. A decision log that hides this would overstate what risk checked.
    `UNSUPPORTED_CURRENCY` is added and the decision is at least `REVIEW`. The
    country and velocity rules still apply. Reversible: adding a currency's
    thresholds is a policy change with a new `rule_set_version`.
-5. `evt.rsk.risk.assessed.v1` carries `attestationSource` (optional, contract
-   1.0.0). Who attested (`attestedBy`) stays behind the risk API.
+5. `Risk.RiskAssessment.Assessed.v1` (on the aggregate topic `evt.rsk.risk.v1`)
+   carries `attestationSource` (optional, contract 1.0.0). Who attested (`attestedBy`) stays behind the risk API.
 6. `rsk-policy-v3` keeps v2's rules and restores the monolith's fraud refusals
    (enterprise-loan-management-system
    `payment-context/payment-infrastructure/.../external/FraudDetectionServiceAdapter.java:98-117`,

@@ -9,7 +9,7 @@ Extraction of risk decisioning from `enterprise-loan-management-system` into
 | Context / service | `rsk` / `svc-rsk-decisioning` |
 | Slice | Transaction risk assessment (score, ALLOW / REVIEW / BLOCK, reasons) and the history of credit risk assessments |
 | Owned data | `db_rsk_decisioning_<env>`, schema `sc_rsk_decisioning`: `risk_assessment`, `legacy_credit_risk_assessment`, `outbox_event` |
-| Events | `evt.rsk.risk.assessed.v1` (`Risk.RiskAssessment.Assessed.v1`) through a transactional outbox; contract `api/asyncapi/svc-rsk-decisioning.yaml` (Proposed). Callers still use the decision synchronously. |
+| Events | `Risk.RiskAssessment.Assessed.v1` on the aggregate topic `evt.rsk.risk.v1` (ADR-019: one topic per aggregate, key = assessment id, headers `eventType`, `eventId`, `correlationId`, plus `traceparent` when traced; consumers skip eventTypes they do not handle) through a transactional outbox; contract `api/asyncapi/svc-rsk-decisioning.yaml` (Proposed). Callers still use the decision synchronously. |
 | Called by | `svc-pay-initiation-settlement` (namespace `payments`, client on `SERVICE_CALLERS`): `POST /api/v1/risk/assess`, `GET /api/v1/risk/assessments/{transactionId}`; bank staff read assessments |
 
 ## 1. Data ownership split
@@ -45,7 +45,7 @@ The backfill is independent of the other contexts' backfills and can be re-run u
 | 2 | Precondition: `highRiskCountry` and `velocityScore` have a real source in the caller (not caller constants); see the ADR 0001 follow-ups. Parity and test runs may use constants. Payments send `paymentType` (their PaymentType value; required since `rsk-policy-v3`). Then payments call `POST /api/v1/risk/assess` with the payment id as `transactionId` and a client-credentials token (`SERVICE` role), behind a flag. Network path: the service-mesh repo's `allow-ingress-from-payments` in namespace `risk` (mesh #11); this chart ships no NetworkPolicy | flag off; payments keep their rule-based screening |
 | 3 | Monolith stops writing `risk_assessments`; re-run the backfill for late rows | monolith table is still intact |
 | 4 | Preconditions: the mesh contract (fintechbankx-platform-mesh-security-service-mesh `contracts/mesh-contract.yaml`) lists `msk` in the datastores of `risk-decisioning-service` and `allow-egress-msk` is generated for namespace `risk`; asyncapi-catalog #11 (the catalog entry for
-`api/asyncapi/svc-rsk-decisioning.yaml`) is merged; `evt.rsk.risk.assessed.v1` exists on the platform cluster; the IRSA role is granted (`msk_cluster_arn`). Then enable the relay: `helm upgrade ... --set config.OUTBOX_RELAY_ENABLED=true` (or the same key in the environment's values file). Check `outbox_pending_events` falls to zero and `outbox_parked_rows` stays zero | `--set config.OUTBOX_RELAY_ENABLED=false`; events stay in the outbox |
+`api/asyncapi/svc-rsk-decisioning.yaml`) is merged; the aggregate topic `evt.rsk.risk.v1` exists on the platform cluster (no per-event topic is needed); the IRSA role is granted (`msk_cluster_arn`). Then enable the relay: `helm upgrade ... --set config.OUTBOX_RELAY_ENABLED=true` (or the same key in the environment's values file). Check `outbox_pending_events` falls to zero and `outbox_parked_rows` stays zero | `--set config.OUTBOX_RELAY_ENABLED=false`; events stay in the outbox |
 | 5 | After one full month-end cycle: drop the monolith table | restore from snapshot |
 
 Existing release: the chart's selector labels now include `app.kubernetes.io/component: service`, and a Deployment's
@@ -103,8 +103,8 @@ Replay, after fixing the cause (topic created, IAM policy fixed, payload size li
 relay or by hand:
 
 ```sql
--- Inspect
-SELECT event_id, created_seq, topic, attempts, last_error, parked_at
+-- Inspect. Since V10 every unpublished row targets evt.rsk.risk.v1; the event is named by event_type.
+SELECT event_id, created_seq, event_type, topic, attempts, last_error, parked_at
 FROM sc_rsk_decisioning.outbox_event
 WHERE published_at IS NULL AND parked_at IS NOT NULL
 ORDER BY created_seq;
@@ -129,6 +129,6 @@ of the environment.
 - [x] Container image, Helm chart, Terraform validate in CI (`Deployability` workflow)
 - [ ] Payment services call this API (follow-up in the payments repositories)
 - [x] Risk decision events written through a transactional outbox (one row per new assessment, none on retries or lost races), relayed in order with one active relay
-- [ ] Topic `evt.rsk.risk.assessed.v1` created on the platform cluster (fintechbankx-platform-event-streaming-kafka) and the catalog mirror updated
+- [ ] Topic `evt.rsk.risk.v1` created on the platform cluster (fintechbankx-platform-event-streaming-kafka) and the catalog mirror updated
 - [ ] Model-backed fraud score (port of the payments `infrastructure/fraud` package)
 - [ ] Production backfill and reconciliation report attached here

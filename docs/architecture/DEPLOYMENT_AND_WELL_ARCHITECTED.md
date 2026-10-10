@@ -9,7 +9,7 @@ not done yet.
 ```
 payment services ─HTTP─▶ risk-decisioning-service pods (EKS namespace risk, 3..12, HPA)
                             ├─ JDBC ─▶ Aurora PostgreSQL Serverless v2 (Multi-AZ)
-                            └─ outbox relay ─▶ Amazon MSK (IAM auth) evt.rsk.risk.assessed.v1
+                            └─ outbox relay ─▶ Amazon MSK (IAM auth) evt.rsk.risk.v1
 ```
 
 | Artifact | Path |
@@ -25,7 +25,7 @@ payment services ─HTTP─▶ risk-decisioning-service pods (EKS namespace risk
 | Pillar | What is in place | Where |
 |---|---|---|
 | Operational excellence | Health groups for startup/liveness/readiness on a separate management port; Prometheus metrics with `service` tag; outbox gauges `outbox_pending_events`, `outbox_oldest_pending_age_seconds` and `outbox_parked_rows`, counters `outbox_send_failures_total` and `outbox_parked_events_total`; correlation id (`x-fapi-interaction-id`) in logs, responses and events; IaC for every AWS resource | `application.yml`, `OutboxConfiguration`, `CorrelationIdFilter`, `deploy/terraform` |
-| Security | OAuth2 resource server: issuer and audience (`svc-rsk-decisioning`) validated, Keycloak realm roles and method security (`BANKER`, `ADMIN`, or `SERVICE` from a client on `SERVICE_CALLERS`); mesh-wide STRICT mTLS with default-deny and ALLOW rules owned by the service-mesh repo, namespace network policies also come from the service-mesh repo (mesh #11 admits `payments` to namespace `risk`), and the chart ships none; DPoP not required for internal client-credentials calls (platform contract); non-root, read-only root filesystem, all capabilities dropped; DB credential from Secrets Manager via External Secrets; two KMS keys (ADR-023): an untagged database key for Aurora storage, snapshots and Performance Insights, and a secrets key tagged `fintechbankx.io/secrets=true` for Secrets Manager only, so External Secrets cannot decrypt the database key; TLS enforced (`rds.force_ssl`); IRSA least privilege (MSK access only to `evt.rsk.risk.*` topics, IAM auth instead of shared Kafka credentials); DB reachable only from the workload security group; events carry ids, decision and reason codes only | `SecurityConfiguration`, `ServiceCallerPolicy`, `RiskController`, `deployment.yaml`, `externalsecret.yaml`, `main.tf` |
+| Security | OAuth2 resource server: issuer and audience (`svc-rsk-decisioning`) validated, Keycloak realm roles and method security (`BANKER`, `ADMIN`, or `SERVICE` from a client on `SERVICE_CALLERS`); mesh-wide STRICT mTLS with default-deny and ALLOW rules owned by the service-mesh repo, namespace network policies also come from the service-mesh repo (mesh #11 admits `payments` to namespace `risk`), and the chart ships none; DPoP not required for internal client-credentials calls (platform contract); non-root, read-only root filesystem, all capabilities dropped; DB credential from Secrets Manager via External Secrets; two KMS keys (ADR-023): an untagged database key for Aurora storage, snapshots and Performance Insights, and a secrets key tagged `fintechbankx.io/secrets=true` for Secrets Manager only, so External Secrets cannot decrypt the database key; TLS enforced (`rds.force_ssl`); IRSA least privilege (MSK writes only to the aggregate topic `evt.rsk.risk.v1`, IAM auth instead of shared Kafka credentials; `deploy/terraform/tests/msk-topic.tftest.hcl`); DB reachable only from the workload security group; events carry ids, decision and reason codes only | `SecurityConfiguration`, `ServiceCallerPolicy`, `RiskController`, `deployment.yaml`, `externalsecret.yaml`, `main.tf` |
 | Reliability | Aurora Multi-AZ, PITR, deletion protection; pods spread across zones, PDB, graceful shutdown; decisions are insert-only and unique per transaction, so retries are safe and return the original decision; transactional outbox (no lost or phantom events), ordered single-relay publishing, idempotent Kafka producer | `main.tf`, `deployment.yaml`, `pdb.yaml`, `RiskAssessmentService`, `TransactionalRiskAssessmentUseCase`, `OutboxRelay`, `V1__create_risk_assessment.sql`, `V3__create_outbox.sql` |
 | Performance efficiency | Stateless pods scaled by HPA; Aurora Serverless v2; virtual threads; unique index for the transaction lookup, a partial index for the manual-review queue and one for the outbox queue | `hpa.yaml`, `main.tf`, `application.yml`, `V1__create_risk_assessment.sql`, `V3__create_outbox.sql` |
 | Cost optimization | Serverless v2 floor of 0.5 ACU in dev; dev overrides (single Aurora instance, 2-4 pods); log retention 30 days outside prod; outbox rows purged after 7 days | `environments/dev.tfvars.example`, `values-dev.yaml`, `OutboxRelay.purgePublished` |
@@ -39,9 +39,14 @@ relay's connection to MSK (port 9098) is dropped until the platform allows it. B
 
 1. The mesh contract lists `msk` for `risk-decisioning-service` (allow-egress-msk generated for namespace `risk`);
    owned by fintechbankx-platform-mesh-security-service-mesh.
-2. asyncapi-catalog #11 (the catalog entry for this contract) is merged, and topic `evt.rsk.risk.assessed.v1`
-   exists on the platform cluster.
-3. `msk_cluster_arn` is set in Terraform, so the IRSA role can publish to `evt.rsk.risk.*`.
+2. asyncapi-catalog #11 (the catalog entry for this contract) is merged, and the aggregate topic `evt.rsk.risk.v1`
+   exists on the platform cluster (ADR-019: one topic per aggregate; the per-event topic is retired).
+3. `msk_cluster_arn` is set in Terraform, so the IRSA role can publish to `evt.rsk.risk.v1`.
+
+Every record on `evt.rsk.risk.v1` is keyed by the assessment id and carries the `eventType`, `eventId` and
+`correlationId` headers (plus `traceparent` when traced). Consumers route on `eventType` and skip types they do not
+handle, so adding an event type is additive; a breaking change to one event is a new eventType `...v2` on the same
+topic, and the topic major changes only for key, partition-count or cleanup changes.
 
 Aurora TLS: `config.DB_URL` must use `sslmode=verify-full` (the Terraform `jdbc_url` output does, with
 `sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem`); the chart fails to render otherwise. It mounts ConfigMap
@@ -53,7 +58,7 @@ Aurora TLS: `config.DB_URL` must use `sslmode=verify-full` (the Terraform `jdbc_
 - The mesh contract does not yet give namespace `risk` MSK egress, so the relay stays off (see above).
 
 - No caller uses the service yet; payments still screen locally.
-- Topic `evt.rsk.risk.assessed.v1` and its ACLs are not yet created on the platform MSK cluster; the IRSA Kafka policy is only attached when `msk_cluster_arn` is set.
+- Topic `evt.rsk.risk.v1` and its ACLs are not yet created on the platform MSK cluster; the IRSA Kafka policy is only attached when `msk_cluster_arn` is set.
 - The application DB role (`risk_decisioning_app`) is created by a DBA bootstrap step, not by Terraform.
 - `microservice-base` is referenced at `ref=main`; pin a tag once the modules repo publishes releases.
 - No load test yet; HPA targets are starting values.

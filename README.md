@@ -80,16 +80,21 @@ Module layout: `risk-domain` (assessment, events, policy, ports) ← `risk-appli
 
 ## Published events
 
+One topic per aggregate (ADR-019): every event of the `RiskAssessment` aggregate goes to `evt.rsk.risk.v1`, keyed by the assessment id, so one assessment's events stay in order in one partition. The event is named by its `eventType`, in the envelope and in the `eventType` record header, not by the topic.
+
 | Topic | eventType | Key | When |
 |---|---|---|---|
-| `evt.rsk.risk.assessed.v1` | `Risk.RiskAssessment.Assessed.v1` | assessment id (`aggregateId`) | A transaction gets its first decision of record. A retry that returns the stored decision publishes nothing. |
+| `evt.rsk.risk.v1` | `Risk.RiskAssessment.Assessed.v1` | assessment id (`aggregateId`) | A transaction gets its first decision of record. A retry that returns the stored decision publishes nothing. |
+
+- Consumers read the `eventType` header first, handle the types they subscribe to and skip every other type: commit the offset, never fail and never dead-letter it. A new event type on `evt.rsk.risk.v1` is therefore additive.
+- Versioning: adding an optional field or a new event type is a minor change. A breaking change to one event is a new eventType (`Risk.RiskAssessment.Assessed.v2`) on the same topic, published alongside v1 until every consumer has moved. The topic major (`evt.rsk.risk.v2`) changes only when the record key, the partition count or the cleanup policy changes.
 
 - Written to `sc_rsk_decisioning.outbox_event` in the same transaction as the `risk_assessment` row (`TransactionalRiskAssessmentUseCase`, `OutboxRiskEventPublisher`). If the insert loses a race on the unique `transaction_id`, the transaction rolls back and no event is left behind.
 - `OutboxRelay` publishes rows in insertion order. One replica relays at a time (Postgres advisory lock). Delivery is at least once, so consumers de-duplicate on `eventId`. Published rows are purged after `risk.outbox.retention` (7 days).
 - Runtime settings: `KAFKA_BOOTSTRAP_SERVERS` and `KAFKA_SECURITY_PROTOCOL`; `SPRING_PROFILES_ACTIVE=kafka-msk` selects Amazon MSK with IAM auth through the IRSA role, and `kafka-strimzi` selects mutual TLS with PEM from `KAFKA_TLS_CERT`/`KAFKA_TLS_KEY`/`KAFKA_TLS_CA`; `OUTBOX_RELAY_ENABLED` is `"false"` in the Helm chart until the mesh contract gives namespace `risk` MSK egress (runbook step 4). The application default is off too; local runs with a broker set `OUTBOX_RELAY_ENABLED=true`. The producer follows the platform client guide: client id `svc-rsk-decisioning`, `acks=all`, idempotent, lz4, `linger.ms=5`, and no topic auto-creation.
-- Record headers: `eventType`, `eventId`, `correlationId`, `x-fapi-interaction-id`, and a W3C `traceparent` when the request that raised the event was traced.
+- Record headers, UTF-8 text (catalog `common/event-envelope.yaml` `EventHeaders`): `eventType` (equal to the envelope `eventType`), `eventId` and `correlationId` (equal to the envelope fields), `x-fapi-interaction-id`, and a W3C `traceparent` when the request that raised the event was traced.
 - Backlog metric: `outbox_pending_events{service="svc-rsk-decisioning"}`. Alerts live in fintechbankx-platform-observability-sre-operations PR #11 (not merged, commit `eca7aa0`), which also widens the AMP keep regex to the `outbox_` series; this service ships no alert rule. All three are keyed by the `service_id` pod label (`svc-rsk-decisioning`) and routed by squad (risk): OutboxRelayStalled, `max(outbox_oldest_pending_age_seconds) > 900` for 5m, critical; OutboxSendFailures, any increase in `outbox_send_failures_total` over 10m, warning; OutboxEventsParked, any increase in `outbox_parked_events_total` over 15m, warning, no `for` clause (operator parks also fire it). See the runbook, section 4. Per ADR-021 decision 4, a payload error (record too large, not serializable, invalid topic) parks the row (counted once in `outbox_parked_events_total{exception}`; `outbox_parked_rows` is the current number) and the relay continues; every other failure (retriable, authorization, SASL/IAM, unclassified) stops the batch without marking the row and is retried with exponential backoff (up to `risk.outbox.relay.max-backoff`, 5 min), never parked. Manual park and replay steps are in the runbook.
-- Status: Proposed. The catalog entry for this contract is proposed in fintechbankx-governance-architecture-enablement-asyncapi-catalog PR #11 (not merged), and the topics are not yet created on the platform cluster.
+- Status: Proposed. The catalog entry for this contract is proposed in fintechbankx-governance-architecture-enablement-asyncapi-catalog PR #11 (not merged), and topic `evt.rsk.risk.v1` is not yet created on the platform cluster.
 
 ## Dokümantasyon ve Referanslar
 - [Enterprise Architecture Hub](https://github.com/COPUR/fintechbankx-governance-architecture-enablement-enterprise-architecture)
