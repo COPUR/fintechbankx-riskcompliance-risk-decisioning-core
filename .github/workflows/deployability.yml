@@ -118,6 +118,31 @@ jobs:
             --set "config.LOGGING_LEVEL_ORG_POSTGRESQL=TRACE"
           reject_render "config.logging.level.root must not be set: log levels are not install-time values" \
             --set "config.logging\.level\.root=DEBUG"
+          # DB_SSL_ROOT_CERT is the only switch of the TLS startup assertion (DatabaseTlsGuard, KafkaTlsGuard); the chart
+          # sets it from the mounted bundle, so a config key, empty or not and in any spelling, is refused.
+          reject_render "config.DB_SSL_ROOT_CERT must not be set: the TLS startup assertion has no off switch" \
+            --set-string 'config.DB_SSL_ROOT_CERT='
+          reject_render "config.DB_SSL_ROOT_CERT must not be set: the TLS startup assertion has no off switch" \
+            --set-string 'config.DB_SSL_ROOT_CERT=/tmp/decoy.pem'
+          reject_render "config.db.ssl.root.cert must not be set: the TLS startup assertion has no off switch" \
+            --set-string 'config.db\.ssl\.root\.cert='
+          # The local profile is for a developer machine (plain-text local services); it must not be activated or
+          # included through any spelling of spring.profiles.active or spring.profiles.include, in any case or
+          # position of the list.
+          reject_render "config.SPRING_PROFILES_ACTIVE must not activate the local profile" \
+            --set-string 'config.SPRING_PROFILES_ACTIVE=local'
+          reject_render "config.SPRING_PROFILES_ACTIVE must not activate the local profile" \
+            --set-string 'config.SPRING_PROFILES_ACTIVE=Kafka-Strimzi\,LOCAL'
+          reject_render "config.SPRING_PROFILES_INCLUDE must not activate the local profile" \
+            --set-string 'config.SPRING_PROFILES_INCLUDE=x\, local'
+          reject_render "config.spring.profiles.active[1] must not activate the local profile" \
+            --set-string 'config.spring\.profiles\.active\[1\]=local'
+          reject_render "config.SPRING_PROFILES_ACTIVE_0 must not activate the local profile" \
+            --set-string 'config.SPRING_PROFILES_ACTIVE_0=x \, local'
+          reject_render "config.spring.profiles.include must not activate the local profile" \
+            --set-string 'config.spring\.profiles\.include=Local'
+          # ...but a profile whose name only contains "local" still renders.
+          helm template ci "$chart" $args --set-string 'config.SPRING_PROFILES_ACTIVE=kafka-strimzi\,localhost' > /dev/null
           # The chart has no extraEnv or env list, so the ConfigMap is the only route for a config key; make sure
           # nobody adds one without routing it through the same check.
           helm show values "$chart" | python3 -c '
