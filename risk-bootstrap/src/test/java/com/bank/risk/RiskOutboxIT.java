@@ -73,7 +73,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * and a lost insert race or a failed outbox write leaves neither behind.
  * The scheduled relay is off; Kafka is mocked.
  */
-@SpringBootTest(properties = "risk.outbox.relay.enabled=false")
+// The test database has no TLS: fintechbankx.tls.enforce=false is a test-only switch (StartupTlsAssertionsTest).
+@SpringBootTest(properties = {"risk.outbox.relay.enabled=false", "fintechbankx.tls.enforce=false"})
 @AutoConfigureMockMvc
 class RiskOutboxIT {
 

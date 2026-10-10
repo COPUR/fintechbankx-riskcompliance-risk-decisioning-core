@@ -21,10 +21,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * refuses to start rather than let the relay, once switched on, publish
  * decisions in clear.
  *
- * <p>The guard runs whenever DB_SSL_ROOT_CERT is set, exactly like
- * {@link DatabaseTlsGuard}: the outbox relay flag only decides whether
- * anything publishes, not whether the configuration is checked. Without the
- * bundle (local runs and tests) the guard is off.
+ * <p>The guard is on by default, exactly like {@link DatabaseTlsGuard}: the
+ * outbox relay flag only decides whether anything publishes, not whether the
+ * configuration is checked, and the RDS bundle is not a switch. Only the local
+ * profile or the test switch fintechbankx.tls.enforce=false leave it out.
  */
 class KafkaTlsGuardTest {
 
@@ -137,16 +137,27 @@ class KafkaTlsGuardTest {
                 .run(context -> assertThat(context).hasNotFailed().hasSingleBean(KafkaTlsGuard.class));
     }
 
-    /** Local runs and tests have no RDS bundle (and application.yml defaults to PLAINTEXT) and keep working. */
+    /** On by default: the bundle is not the switch. A PLAINTEXT producer (application.yml's default) is refused without it too. */
     @Test
-    void staysInactiveWithoutTheBundleSoLocalRunsStillStart() {
+    void refusesToStartTheContextWithAPlaintextProducerWithoutTheBundle() {
         contextRunner
                 .withPropertyValues("risk.outbox.relay.enabled=true", "spring.kafka.security.protocol=PLAINTEXT")
-                .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(KafkaTlsGuard.class));
+                .run(context -> assertThat(context).hasFailed().getFailure().hasMessageContaining(REFUSED));
         contextRunner
                 .withPropertyValues("spring.kafka.security.protocol=PLAINTEXT")
+                .run(context -> assertThat(context).hasFailed().getFailure().hasMessageContaining(REFUSED));
+        contextRunner
+                .run(context -> assertThat(context).hasFailed().getFailure().hasMessageContaining(REFUSED));
+    }
+
+    /** Only the local profile or the test switch (test resources and annotations, never a shipped application*.yml) leave the guard out. */
+    @Test
+    void staysOffWithTheLocalProfileOrTheTestSwitch() {
+        contextRunner
+                .withPropertyValues("spring.profiles.active=local", "spring.kafka.security.protocol=PLAINTEXT")
                 .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(KafkaTlsGuard.class));
         contextRunner
+                .withPropertyValues("fintechbankx.tls.enforce=false", "spring.kafka.security.protocol=PLAINTEXT")
                 .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(KafkaTlsGuard.class));
     }
 

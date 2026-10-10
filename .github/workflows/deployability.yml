@@ -186,14 +186,26 @@ jobs:
             --set "config.LOGGING_LEVEL_ORG_POSTGRESQL=TRACE"
           reject_render "config.logging.level.root must not be set: log levels are not install-time values" \
             --set "config.logging\.level\.root=DEBUG"
-          # DB_SSL_ROOT_CERT is the only switch of the TLS startup assertion (DatabaseTlsGuard, KafkaTlsGuard); the chart
-          # sets it from the mounted bundle, so a config key, empty or not and in any spelling, is refused.
+          # DB_SSL_ROOT_CERT is the bundle the TLS startup assertions (DatabaseTlsGuard, KafkaTlsGuard; on by default)
+          # verify against; the chart sets it from the mounted bundle on every container, and the service refuses to
+          # start without it. A config key, empty or not and in any spelling, is refused.
           reject_render "config.DB_SSL_ROOT_CERT is not allowed: a TLS parameter name can replace the mounted CA" \
             --set-string 'config.DB_SSL_ROOT_CERT='
           reject_render "config.DB_SSL_ROOT_CERT is not allowed: a TLS parameter name can replace the mounted CA" \
             --set-string 'config.DB_SSL_ROOT_CERT=/tmp/decoy.pem'
           reject_render "config.db.ssl.root.cert is not allowed: a TLS parameter name can replace the mounted CA" \
             --set-string 'config.db\.ssl\.root\.cert='
+          # The assertions have one switch, fintechbankx.tls.enforce=false, for the local profile and tests only; the
+          # guard refuses every fintechbankx.tls.* config key in every spelling, so no install-time value turns them off.
+          tls_switch="it can switch off the service's startup TLS assertion"
+          reject_render "config.FINTECHBANKX_TLS_ENFORCE is not allowed: $tls_switch" \
+            --set-string 'config.FINTECHBANKX_TLS_ENFORCE=false'
+          reject_render "config.fintechbankx.tls.enforce is not allowed: $tls_switch" \
+            --set-string 'config.fintechbankx\.tls\.enforce=false'
+          reject_render "config.FINTECHBANKX-TLS-ENFORCE is not allowed: $tls_switch" \
+            --set-string 'config.FINTECHBANKX-TLS-ENFORCE=true'
+          reject_render "config.fintechbankx.tls.enforce[0] is not allowed: $tls_switch" \
+            --set-string 'config.fintechbankx\.tls\.enforce\[0\]=false'
           # The local profile is for a developer machine (plain-text local services). The chart renders the only
           # profile, SPRING_PROFILES_ACTIVE from kafka.runtime, so the guard refuses every spring.profiles.* config key,
           # in every spelling, whatever it names.
@@ -428,6 +440,15 @@ jobs:
           reject_render "externalSecret.migrationSecretName is required" --set externalSecret.migrationSecretName=
           reject_render "externalSecret.migrationSecretName must be <env>/risk-decisioning-service/" \
             --set externalSecret.migrationSecretName=ci/other-service/db-migration
+          # The <env>/<service account>/ prefix is matched literally (regexQuoteMeta on serviceAccount.name, as in
+          # customer). It can only ever see a DNS label: risk.guard, the first line of the Job template, refuses any
+          # other serviceAccount.name before the prefix rule runs, so a name with a regex metacharacter never reaches
+          # it, and a wrong prefix is refused with the prefix message, not matched by accident.
+          reject_render "serviceAccount.name must be a DNS label" \
+            --set serviceAccount.name=risk.decisioning-service \
+            --set externalSecret.migrationSecretName=ci/riskXdecisioning-service/db-migration
+          reject_render "externalSecret.migrationSecretName must be <env>/risk-decisioning-service/" \
+            --set externalSecret.migrationSecretName=ci/risk-decisioning-servicex/db-migration
           # ...and it must be another secret than the runtime one: a single credential for both would run Flyway
           # and the service as the same role, and V11's insert-only grants (decision 0002) would not hold.
           # Compared trimmed and without a trailing "/", so a spelling variant of the same name is refused too.

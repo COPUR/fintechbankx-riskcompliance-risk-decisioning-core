@@ -187,10 +187,41 @@ class DatabaseTlsGuardTest {
                 .run(context -> assertThat(context).hasNotFailed().hasSingleBean(DatabaseTlsGuard.class));
     }
 
+    /** On by default: without the bundle the guard runs and requires it, whatever the URL says. */
     @Test
-    void staysInactiveWithoutTheBundleSoLocalRunsAndTestsStart() {
+    void requiresTheBundleWhileOn() {
+        MockEnvironment noBundle = new MockEnvironment().withProperty("spring.datasource.url", VALID);
+        MockEnvironment blankBundle = environment(VALID).withProperty("DB_SSL_ROOT_CERT", " ");
+
+        assertThatThrownBy(() -> new DatabaseTlsGuard(noBundle).verify())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("DB_SSL_ROOT_CERT must name the mounted RDS CA bundle")
+                .message().doesNotContain("aurora.example");
+        assertThatThrownBy(() -> new DatabaseTlsGuard(blankBundle).verify())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("DB_SSL_ROOT_CERT must name the mounted RDS CA bundle");
+    }
+
+    @Test
+    void refusesToStartTheContextWithoutTheBundle() {
         contextRunner
                 .withPropertyValues("spring.datasource.url=" + BASE + "?sslmode=disable")
+                .run(context -> assertThat(context).hasFailed().getFailure()
+                        .hasMessageContaining("DB_SSL_ROOT_CERT must name the mounted RDS CA bundle"));
+        contextRunner
+                .withPropertyValues("spring.datasource.url=" + VALID)
+                .run(context -> assertThat(context).hasFailed().getFailure()
+                        .hasMessageContaining("DB_SSL_ROOT_CERT must name the mounted RDS CA bundle"));
+    }
+
+    /** Only the local profile or the test switch (test resources and annotations, never a shipped application*.yml) leave the guard out. */
+    @Test
+    void staysOffWithTheLocalProfileOrTheTestSwitch() {
+        contextRunner
+                .withPropertyValues("spring.profiles.active=local", "spring.datasource.url=" + BASE + "?sslmode=disable")
+                .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(DatabaseTlsGuard.class));
+        contextRunner
+                .withPropertyValues("fintechbankx.tls.enforce=false", "spring.datasource.url=" + BASE + "?sslmode=disable")
                 .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(DatabaseTlsGuard.class));
     }
 

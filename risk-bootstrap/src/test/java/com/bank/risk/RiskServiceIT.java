@@ -32,7 +32,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * the service itself only validates), Hibernate validates the entity against
  * it, and a payment service assesses transactions over HTTP as the runtime role.
  */
-@SpringBootTest(properties = "risk.outbox.relay.enabled=false")
+// The test database has no TLS: fintechbankx.tls.enforce=false is a test-only switch (StartupTlsAssertionsTest).
+@SpringBootTest(properties = {"risk.outbox.relay.enabled=false", "fintechbankx.tls.enforce=false"})
 @AutoConfigureMockMvc
 class RiskServiceIT {
 

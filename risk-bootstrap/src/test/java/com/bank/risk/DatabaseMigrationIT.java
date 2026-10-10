@@ -37,6 +37,9 @@ class DatabaseMigrationIT {
     private static final String JOB_SCHEMA = "sc_rsk_decisioning_job_it";
     private static final String SERVICE_SCHEMA = "sc_rsk_decisioning";
     private static final String RDS_BUNDLE = "/etc/fintechbankx/rds-ca/global-bundle.pem";
+    /** The test database has no TLS: the switch is for tests and the local profile only, never a shipped application*.yml. */
+    private static final String TLS_ASSERTIONS_OFF = "--fintechbankx.tls.enforce=false";
+    private static final String NO_BUNDLE = "DB_SSL_ROOT_CERT must name the mounted RDS CA bundle";
 
     private static JdbcTemplate owner;
 
@@ -62,7 +65,7 @@ class DatabaseMigrationIT {
             assertThat(job.getBeanNamesForType(KafkaTemplate.class)).as("no Kafka").isEmpty();
             assertThat(job.getBeanNamesForType(OutboxRelay.class)).as("no outbox relay").isEmpty();
             assertThat(job.getBeanNamesForType(DatabaseTlsGuard.class))
-                .as("the TLS guard is off without DB_SSL_ROOT_CERT, as in the pods").isEmpty();
+                .as("the TLS guard is off only through the test switch (the test database has no TLS)").isEmpty();
         }
 
         assertThat(appliedVersions(JOB_SCHEMA)).isEqualTo(resolvedMigrations());
@@ -92,7 +95,7 @@ class DatabaseMigrationIT {
     /** The Job gets DB_SSL_ROOT_CERT from the chart like the pods, so DatabaseTlsGuard runs there too. */
     @Test
     void theMigrationJobRefusesADatabaseUrlTheDriverWouldNotVerify() {
-        String[] arguments = with(job(JOB_SCHEMA), "--DB_SSL_ROOT_CERT=" + RDS_BUNDLE);
+        String[] arguments = with(tlsAssertingJob(JOB_SCHEMA), "--DB_SSL_ROOT_CERT=" + RDS_BUNDLE);
 
         // Thrown by the guard itself (a BeanFactoryPostProcessor), before any connection or Flyway bean.
         assertThatThrownBy(() -> DatabaseMigration.start(arguments))
@@ -101,10 +104,47 @@ class DatabaseMigrationIT {
         assertThat(DatabaseMigration.run(arguments)).isNotZero();
     }
 
+    /**
+     * The TLS assertions are on by default, not armed by DB_SSL_ROOT_CERT: a Job
+     * run anywhere without the bundle (no profile, no test switch) refuses to
+     * migrate before any connection, so a runtime outside the chart gets the
+     * same refusal as a pod.
+     */
+    @Test
+    void theMigrationJobRefusesToRunWithoutTheBundle() {
+        String[] arguments = tlsAssertingJob(JOB_SCHEMA);
+
+        assertThatThrownBy(() -> DatabaseMigration.start(arguments))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining(NO_BUNDLE)
+            .message().doesNotContain(PostgresTestDatabase.url());
+        assertThat(DatabaseMigration.run(arguments)).isNotZero();
+    }
+
+    /** The service pod path, same rule: without the bundle, the local profile or the test switch it does not start. */
+    @Test
+    void theServiceRefusesToStartWithoutTheBundle() {
+        assertThatThrownBy(() -> tlsAssertingService())
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining(NO_BUNDLE);
+    }
+
+    /** The local profile is the developer's switch: the same service shape starts with it. */
+    @Test
+    void theServiceStartsWithTheLocalProfileWithoutTheBundle() {
+        assertThat(DatabaseMigration.run(job(SERVICE_SCHEMA))).isZero();
+
+        try (ConfigurableApplicationContext service = tlsAssertingService("--spring.profiles.active=local")) {
+            assertThat(service.isRunning()).isTrue();
+            assertThat(service.getBeanNamesForType(DatabaseTlsGuard.class)).isEmpty();
+        }
+    }
+
     /** The single-user fallback: a db-migration secret holding the runtime role must not migrate (decision 0002). */
     @Test
     void theMigrationJobRefusesToRunAsTheRuntimeRole() {
-        String[] arguments = jobAs(JOB_SCHEMA, PostgresTestDatabase.RUNTIME_ROLE, PostgresTestDatabase.RUNTIME_PASSWORD);
+        String[] arguments = with(
+            jobAs(JOB_SCHEMA, PostgresTestDatabase.RUNTIME_ROLE, PostgresTestDatabase.RUNTIME_PASSWORD), TLS_ASSERTIONS_OFF);
 
         // Thrown by the guard itself (a BeanFactoryPostProcessor), before any connection or Flyway bean.
         assertThatThrownBy(() -> DatabaseMigration.start(arguments))
@@ -152,8 +192,13 @@ class DatabaseMigrationIT {
             .isZero();
     }
 
-    /** What the Job's pod gets: DB_URL, DB_USERNAME (the role V11 grants) and the db-migration secret. */
+    /** What the Job's pod gets (DB_URL, DB_USERNAME, the db-migration secret), with the TLS assertions off for the test database. */
     private static String[] job(String schema) {
+        return with(tlsAssertingJob(schema), TLS_ASSERTIONS_OFF);
+    }
+
+    /** The same, with the assertions on as in the chart: DB_SSL_ROOT_CERT is then required. */
+    private static String[] tlsAssertingJob(String schema) {
         return jobAs(schema, PostgresTestDatabase.ownerUser(), PostgresTestDatabase.ownerPassword());
     }
 
@@ -168,8 +213,13 @@ class DatabaseMigrationIT {
         };
     }
 
-    /** What a service pod gets: the runtime role only, no DB_MIGRATION_*, chart-default Flyway mode. */
+    /** What a service pod gets (the runtime role only, no DB_MIGRATION_*, chart-default Flyway mode), assertions off for the test database. */
     private static ConfigurableApplicationContext service(String... extra) {
+        return tlsAssertingService(with(new String[] {TLS_ASSERTIONS_OFF}, extra));
+    }
+
+    /** The same, with the assertions on as in the chart. */
+    private static ConfigurableApplicationContext tlsAssertingService(String... extra) {
         String[] arguments = with(new String[] {
             "--spring.datasource.url=" + PostgresTestDatabase.url(),
             "--DB_USERNAME=" + PostgresTestDatabase.RUNTIME_ROLE,
