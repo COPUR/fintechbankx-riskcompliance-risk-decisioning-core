@@ -69,7 +69,8 @@ config:
   # SPRING_LIQUIBASE_*, SPRING_R2DBC_*, SPRING_APPLICATION_JSON, any JDBC URL or TLS parameter name
   # (DB_SSL_ROOT_CERT included: the chart sets it from the mounted bundle), DB_URL in another spelling,
   # SPRING_CONFIG_*, SPRING_PROFILES_* (the chart renders the only profile, from kafka.runtime below),
-  # SPRING_SSL_* and SSL bundles, FINTECHBANKX_TLS_*, JVM options (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS,
+  # SPRING_SSL_* and SSL bundles, FINTECHBANKX_TLS_* (separator-free spellings such as FINTECHBANKXTLSENFORCE
+  # too, by this chart's own rule), JVM options (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS,
   # _JAVA_OPTIONS, JAVA_OPTS) and LOGGING_LEVEL_*; keys must be ConfigMap keys ([-._a-zA-Z0-9]+). The runbook
   # ("Deployment prerequisite (Aurora TLS)") has the full list.
   DB_URL: ""

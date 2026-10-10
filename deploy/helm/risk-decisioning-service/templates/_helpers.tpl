@@ -167,7 +167,12 @@ config.DB_USERNAME, its password only in the ExternalSecret); any JVM option
 name in config, whatever the value (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS,
 _JAVA_OPTIONS, JAVA_OPTS: the image fixes them); LOGGING_LEVEL_* (a log level
 is not an install-time value: LOGGING_LEVEL_ORG_POSTGRESQL=TRACE would write
-the wire protocol, with row data, to the pod log); a DB_URL other than plain
+the wire protocol, with row data, to the pod log); FINTECHBANKXTLS* after
+normalisation (the guard refuses fintechbankx.tls.* only with a separator
+after fintechbankx and tls, so FINTECHBANKXTLSENFORCE would render:
+fintechbankx.tls.enforce=false is the test switch of the TLS startup
+assertions, with the local profile the only way off, neither for a cluster);
+a DB_URL other than plain
 jdbc:postgresql: (the service connects with PgJDBC, no wrapper);
 extraEnv, env and javaToolOptions values (the chart renders none); a
 kafka.runtime other than msk or strimzi; strimzi without kafkaTls.secretName;
@@ -210,6 +215,9 @@ every non-alphanumeric character dropped.
 {{- end -}}
 {{- if hasPrefix "LOGGINGLEVEL" $name -}}
 {{- fail (printf "config.%s must not be set: log levels are not install-time values" $key) -}}
+{{- end -}}
+{{- if hasPrefix "FINTECHBANKXTLS" $name -}}
+{{- fail (printf "config.%s must not be set: fintechbankx.tls.enforce is the test switch of the TLS startup assertions, which are on by default; only the local profile and tests turn them off, never a cluster" $key) -}}
 {{- end -}}
 {{- end -}}
 {{- $url := trim (toString (default "" (index .Values.config "DB_URL"))) -}}
