@@ -57,13 +57,14 @@ databaseCa:
 config:
   # Terraform output jdbc_url: jdbc:postgresql://<aurora-writer-endpoint>:5432/db_rsk_decisioning_<env>
   #   ?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
-  # The render fails unless sslmode=verify-full and that sslrootcert each appear exactly once
-  # and no sslfactory, sslhostnameverifier or sslpasswordcallback is set; no other config key
-  # may carry a database URL (SPRING_DATASOURCE_*URL, SPRING_FLYWAY_URL, SPRING_APPLICATION_JSON), none may set
-  # SPRING_CONFIG_IMPORT, SPRING_CONFIG_ADDITIONAL_LOCATION or SPRING_CONFIG_LOCATION, none may set JVM options
-  # (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, _JAVA_OPTIONS, JAVA_OPTS), none may set a LOGGING_LEVEL_*, none may set
-  # DB_SSL_ROOT_CERT (empty or not; the chart sets it from the mounted bundle) and SPRING_PROFILES_ACTIVE and
-  # SPRING_PROFILES_INCLUDE must not name the local profile. Keys are matched in every spelling (case, dash, dot,
+  # The render fails unless sslmode=verify-full and that sslrootcert each appear exactly once, in lower case
+  # (PgJDBC ignores SSLMODE=verify-full; a differently-cased checked name is refused), and no sslfactory,
+  # sslfactoryarg, sslhostnameverifier, sslpasswordcallback or service is set; no other config key may start with
+  # SPRING_DATASOURCE_, SPRING_FLYWAY_, SPRING_LIQUIBASE_, SPRING_R2DBC_ or SPRING_CONFIG_ or be
+  # SPRING_APPLICATION_JSON, none may set JVM options (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, _JAVA_OPTIONS,
+  # JAVA_OPTS), none may set a LOGGING_LEVEL_*, none may set DB_SSL_ROOT_CERT (empty or not; the chart sets it
+  # from the mounted bundle) and SPRING_PROFILES_ACTIVE, SPRING_PROFILES_INCLUDE, SPRING_PROFILES_DEFAULT and
+  # SPRING_PROFILES_GROUP_* must not name the local profile. Keys are matched in every spelling (case, dash, dot,
   # underscore, index) Spring's relaxed binding accepts.
   DB_URL: ""
   DB_USERNAME: risk_decisioning_app

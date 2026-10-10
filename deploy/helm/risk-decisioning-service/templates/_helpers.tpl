@@ -117,15 +117,21 @@ sslmode=require encrypts but trusts any certificate.
 
 The query after the first "?" is read the way PgJDBC reads it (split on "&",
 name before the first "="). PgJDBC lets the last of repeated parameters win,
-so sslmode and sslrootcert must each appear exactly once; a custom sslfactory,
-sslhostnameverifier or sslpasswordcallback would replace the verification.
+so sslmode and sslrootcert must each appear exactly once, spelled in lower
+case: PgJDBC reads parameter names case-sensitively, so SSLMODE=verify-full
+would be ignored, and any differently-cased spelling of a checked name is
+refused. A custom sslfactory, sslfactoryarg, sslhostnameverifier or
+sslpasswordcallback would replace the verification, and service= would load
+host, port and TLS settings from a pg_service.conf entry the chart cannot see.
 Values are compared undecoded (PgJDBC decodes values, not names), so an encoded
-value fails closed. The
-ConfigMap exports every config key, so a second URL there (SPRING_DATASOURCE_*URL,
-SPRING_FLYWAY_URL, SPRING_APPLICATION_JSON) would override DB_URL and is refused
-too, and so is a config location or import (SPRING_CONFIG_IMPORT,
-SPRING_CONFIG_ADDITIONAL_LOCATION, SPRING_CONFIG_LOCATION, also indexed), which
-loads a file or configtree that can set the URL. JVM option variables
+value fails closed. The ConfigMap exports every config key, so every Spring
+datasource, Flyway, Liquibase and R2DBC key (SPRING_DATASOURCE_*, SPRING_FLYWAY_*
+including SPRING_FLYWAY_LOCATIONS, which would point validate-at-start at
+another migration set, SPRING_LIQUIBASE_*, SPRING_R2DBC_*) and
+SPRING_APPLICATION_JSON are refused by prefix: they could override DB_URL or
+the credential. So is every SPRING_CONFIG_* key (import, location,
+additional-location, name, also indexed), which picks or loads a file or
+configtree that can set the URL. JVM option variables
 (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, _JAVA_OPTIONS, JAVA_OPTS) are refused
 because they set system properties or load an agent before application.yml is
 read; the image fixes them. LOGGING_LEVEL_* is refused because a log level is
@@ -134,9 +140,11 @@ wire protocol, with row data, to the pod log. DB_SSL_ROOT_CERT is refused,
 empty or not: it is the only switch of the TLS startup assertion
 (DatabaseTlsGuard and KafkaTlsGuard both run whenever it is set, relay on or
 off), and the chart sets it from the mounted bundle on the Deployment and the
-migration Job. SPRING_PROFILES_ACTIVE and SPRING_PROFILES_INCLUDE (also
-indexed) must not name the local profile (a developer machine with plain-text
-local services) in any case or position of the comma list. Each key is
+migration Job. SPRING_PROFILES_ACTIVE, SPRING_PROFILES_INCLUDE and
+SPRING_PROFILES_DEFAULT (also indexed) and any SPRING_PROFILES_GROUP_<name>
+(a group that names local activates it with the group's profile) must not name
+the local profile (a developer machine with plain-text local services) in any
+case or position of the comma list. Each key is
 normalised before matching, the way Spring's relaxed binding reads it from the environment: upper
 case, then every non-alphanumeric character dropped, so dash, dot, underscore
 and index spellings (spring.config.import[0], SPRING_CONFIG_IMPORT_0) all
@@ -149,10 +157,10 @@ application's DatabaseTlsGuard repeats the URL checks at startup.
 {{- $bundle := "/etc/fintechbankx/rds-ca/global-bundle.pem" -}}
 {{- range $key, $value := .Values.config -}}
 {{- $name := upper (regexReplaceAll "[^A-Za-z0-9]" (toString $key) "") -}}
-{{- if regexMatch "^SPRING(DATASOURCE.*URL|DATASOURCEHIKARIDATASOURCEPROPERTIES.*|FLYWAYURL|APPLICATIONJSON)$" $name -}}
+{{- if regexMatch "^SPRING(DATASOURCE|FLYWAY|LIQUIBASE|R2DBC|APPLICATIONJSON)" $name -}}
 {{- fail (printf "config.%s must not be set: config.DB_URL is the only database URL (sslmode=verify-full)" $key) -}}
 {{- end -}}
-{{- if regexMatch "^SPRINGCONFIG(IMPORT|ADDITIONALLOCATION|LOCATION)[0-9]*$" $name -}}
+{{- if hasPrefix "SPRINGCONFIG" $name -}}
 {{- fail (printf "config.%s must not be set: it loads configuration that can override config.DB_URL" $key) -}}
 {{- end -}}
 {{- if regexMatch "^(JAVATOOLOPTIONS|JDKJAVAOPTIONS|JAVAOPTIONS|JAVAOPTS)$" $name -}}
@@ -164,7 +172,7 @@ application's DatabaseTlsGuard repeats the URL checks at startup.
 {{- if eq $name "DBSSLROOTCERT" -}}
 {{- fail (printf "config.%s must not be set: the TLS startup assertion has no off switch (the chart sets DB_SSL_ROOT_CERT from the mounted bundle)" $key) -}}
 {{- end -}}
-{{- if regexMatch "^SPRINGPROFILES(ACTIVE|INCLUDE)[0-9]*$" $name -}}
+{{- if regexMatch "^SPRINGPROFILES((ACTIVE|INCLUDE|DEFAULT)[0-9]*|GROUP.*)$" $name -}}
 {{- range $profile := splitList "," (toString $value) -}}
 {{- if eq (lower (trim $profile)) "local" -}}
 {{- fail (printf "config.%s must not activate the local profile: it is for a developer machine, never for a cluster" $key) -}}
@@ -187,12 +195,17 @@ application's DatabaseTlsGuard repeats the URL checks at startup.
 {{- $kv := splitn "=" 2 $param -}}
 {{- $k := $kv._0 -}}
 {{- $v := toString (default "" $kv._1) -}}
-{{- if eq $k "sslmode" -}}
+{{- $overrides := list "sslfactory" "sslfactoryarg" "sslhostnameverifier" "sslpasswordcallback" -}}
+{{- if and (ne $k (lower $k)) (has (lower $k) (concat (list "sslmode" "sslrootcert" "service") $overrides)) -}}
+{{- fail (printf "config.DB_URL must not set %s: PgJDBC applies only the lower-case parameter name, so it would be ignored (and could pass for %s)" $k (lower $k)) -}}
+{{- else if eq $k "sslmode" -}}
 {{- $sslmode = append $sslmode $v -}}
 {{- else if eq $k "sslrootcert" -}}
 {{- $rootcert = append $rootcert $v -}}
-{{- else if has $k (list "sslfactory" "sslhostnameverifier" "sslpasswordcallback") -}}
+{{- else if has $k $overrides -}}
 {{- fail (printf "config.DB_URL must not set %s: it replaces certificate or host name verification" $k) -}}
+{{- else if eq $k "service" -}}
+{{- fail (printf "config.DB_URL must not set %s: it loads host, port and TLS settings from a pg_service.conf entry the chart cannot see" $k) -}}
 {{- end -}}
 {{- end -}}
 {{- if ne (toJson $sslmode) (toJson (list "verify-full")) -}}
