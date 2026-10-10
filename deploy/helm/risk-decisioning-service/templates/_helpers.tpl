@@ -130,8 +130,14 @@ loads a file or configtree that can set the URL. JVM option variables
 because they set system properties or load an agent before application.yml is
 read; the image fixes them. LOGGING_LEVEL_* is refused because a log level is
 not an install-time value: LOGGING_LEVEL_ORG_POSTGRESQL=TRACE would write the
-wire protocol, with row data, to the pod log. Each key is normalised before
-matching, the way Spring's relaxed binding reads it from the environment: upper
+wire protocol, with row data, to the pod log. DB_SSL_ROOT_CERT is refused,
+empty or not: it is the only switch of the TLS startup assertion
+(DatabaseTlsGuard, and KafkaTlsGuard when the relay is on, run whenever it is
+set), and the chart sets it from the mounted bundle on the Deployment and the
+migration Job. SPRING_PROFILES_ACTIVE and SPRING_PROFILES_INCLUDE (also
+indexed) must not name the local profile (a developer machine with plain-text
+local services) in any case or position of the comma list. Each key is
+normalised before matching, the way Spring's relaxed binding reads it from the environment: upper
 case, then every non-alphanumeric character dropped, so dash, dot, underscore
 and index spellings (spring.config.import[0], SPRING_CONFIG_IMPORT_0) all
 match. The chart renders no Spring config import of its own; a configtree would
@@ -141,7 +147,7 @@ application's DatabaseTlsGuard repeats the URL checks at startup.
 */}}
 {{- define "risk.validateDatabaseTls" -}}
 {{- $bundle := "/etc/fintechbankx/rds-ca/global-bundle.pem" -}}
-{{- range $key, $_ := .Values.config -}}
+{{- range $key, $value := .Values.config -}}
 {{- $name := upper (regexReplaceAll "[^A-Za-z0-9]" (toString $key) "") -}}
 {{- if regexMatch "^SPRING(DATASOURCE.*URL|DATASOURCEHIKARIDATASOURCEPROPERTIES.*|FLYWAYURL|APPLICATIONJSON)$" $name -}}
 {{- fail (printf "config.%s must not be set: config.DB_URL is the only database URL (sslmode=verify-full)" $key) -}}
@@ -154,6 +160,16 @@ application's DatabaseTlsGuard repeats the URL checks at startup.
 {{- end -}}
 {{- if hasPrefix "LOGGINGLEVEL" $name -}}
 {{- fail (printf "config.%s must not be set: log levels are not install-time values" $key) -}}
+{{- end -}}
+{{- if eq $name "DBSSLROOTCERT" -}}
+{{- fail (printf "config.%s must not be set: the TLS startup assertion has no off switch (the chart sets DB_SSL_ROOT_CERT from the mounted bundle)" $key) -}}
+{{- end -}}
+{{- if regexMatch "^SPRINGPROFILES(ACTIVE|INCLUDE)[0-9]*$" $name -}}
+{{- range $profile := splitList "," (toString $value) -}}
+{{- if eq (lower (trim $profile)) "local" -}}
+{{- fail (printf "config.%s must not activate the local profile: it is for a developer machine, never for a cluster" $key) -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- $url := toString (default "" (index .Values.config "DB_URL")) -}}
