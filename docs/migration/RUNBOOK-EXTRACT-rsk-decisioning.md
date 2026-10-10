@@ -39,6 +39,8 @@ The backfill is independent of the other contexts' backfills and can be re-run u
 
 ## 3. Cutover plan
 
+Deployment prerequisite (Aurora TLS): `config.DB_URL` carries `sslmode=verify-full` and `sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem` exactly once each and no `sslfactory`, `sslhostnameverifier` or `sslpasswordcallback`, and no other config key holds a database URL (`SPRING_DATASOURCE_*URL`, `SPRING_FLYWAY_URL`, `SPRING_APPLICATION_JSON`); the chart refuses to render otherwise, and with `DB_SSL_ROOT_CERT` set (always, in the chart) the service's `DatabaseTlsGuard` refuses to start on any datasource or Flyway URL that PgJDBC would not verify against that bundle.
+
 | Step | Action | Rollback |
 |---|---|---|
 | 1 | Preconditions: ConfigMap `rds-ca-bundle` (key `global-bundle.pem`, published by the platform's trust-manager Bundle) exists in namespace `risk`, and `config.DB_URL` is the Terraform `jdbc_url` output with `sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem` (cicd-templates 4f0f266). The chart refuses to render a PostgreSQL URL without `sslmode=verify-full`, and a missing bundle keeps the pods from starting. Install order: cert-manager, trust-manager and the `rds-ca-bundle` Bundle must be installed before this chart; a pod scheduled earlier stays `ContainerCreating` until the ConfigMap appears. Deploy the service with the chart default `config.OUTBOX_RELAY_ENABLED: "false"` (no MSK egress is needed yet); run the backfill; reconcile | drop `sc_rsk_decisioning`, nothing else changed |
