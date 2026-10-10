@@ -13,15 +13,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * The Kafka half of the startup TLS contract, the sibling of
  * {@link DatabaseTlsGuardTest}. In a deployed environment (the chart always
- * mounts the RDS CA bundle, so DB_SSL_ROOT_CERT is set) the outbox relay must
- * publish decisions over TLS: SASL_SSL (Amazon MSK with IAM, profile kafka-msk)
- * or SSL (Strimzi mutual TLS with the KafkaUser certificate, profile
- * kafka-strimzi). PLAINTEXT, SASL_PLAINTEXT or no protocol at all (Kafka
- * defaults to PLAINTEXT) means a values override or a wrong profile, and the
- * service refuses to start rather than publish decisions in clear.
+ * mounts the RDS CA bundle, so DB_SSL_ROOT_CERT is set) the producer must be
+ * configured for TLS: SASL_SSL (Amazon MSK with IAM, profile kafka-msk) or SSL
+ * (Strimzi mutual TLS with the KafkaUser certificate, profile kafka-strimzi).
+ * PLAINTEXT, SASL_PLAINTEXT or no protocol at all (Kafka defaults to
+ * PLAINTEXT) means a values override or a wrong profile, and the service
+ * refuses to start rather than let the relay, once switched on, publish
+ * decisions in clear.
  *
- * <p>The guard is off when the relay is off (nothing publishes) and off
- * without DB_SSL_ROOT_CERT (local runs and tests).
+ * <p>The guard runs whenever DB_SSL_ROOT_CERT is set, exactly like
+ * {@link DatabaseTlsGuard}: the outbox relay flag only decides whether
+ * anything publishes, not whether the configuration is checked. Without the
+ * bundle (local runs and tests) the guard is off.
  */
 class KafkaTlsGuardTest {
 
@@ -48,9 +51,7 @@ class KafkaTlsGuardTest {
 
     @Test
     void refusesAMissingProtocolWhichWouldDefaultToPlaintext() {
-        MockEnvironment environment = new MockEnvironment()
-                .withProperty("DB_SSL_ROOT_CERT", BUNDLE)
-                .withProperty("risk.outbox.relay.enabled", "true");
+        MockEnvironment environment = new MockEnvironment().withProperty("DB_SSL_ROOT_CERT", BUNDLE);
 
         assertThatThrownBy(() -> new KafkaTlsGuard(environment).verify())
                 .isInstanceOf(IllegalStateException.class)
@@ -93,31 +94,47 @@ class KafkaTlsGuardTest {
     }
 
     @Test
-    void refusesToStartTheContextWithAPlaintextProducerWhenTheRelayIsOnAndTheBundleIsMounted() {
+    void refusesToStartTheContextWithAPlaintextProducerWhenTheBundleIsMountedAndTheRelayIsOn() {
         contextRunner
                 .withPropertyValues("DB_SSL_ROOT_CERT=" + BUNDLE, "risk.outbox.relay.enabled=true",
                         "spring.kafka.security.protocol=PLAINTEXT")
                 .run(context -> assertThat(context).hasFailed().getFailure().hasMessageContaining(REFUSED));
     }
 
+    /**
+     * The relay flag is not an off switch for the guard. The chart ships with
+     * OUTBOX_RELAY_ENABLED "false" and turns it on at runbook step 4 with a
+     * values change; a PLAINTEXT producer must be refused on the first rollout,
+     * not discovered on the one that starts publishing.
+     */
+    @Test
+    void refusesToStartTheContextWithAPlaintextProducerWhenTheBundleIsMountedAndTheRelayIsOff() {
+        contextRunner
+                .withPropertyValues("DB_SSL_ROOT_CERT=" + BUNDLE, "risk.outbox.relay.enabled=false",
+                        "spring.kafka.security.protocol=PLAINTEXT")
+                .run(context -> assertThat(context).hasFailed().getFailure().hasMessageContaining(REFUSED));
+        contextRunner
+                .withPropertyValues("DB_SSL_ROOT_CERT=" + BUNDLE, "spring.kafka.security.protocol=PLAINTEXT")
+                .run(context -> assertThat(context).hasFailed().getFailure().hasMessageContaining(REFUSED));
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"SASL_SSL", "SSL"})
-    void startsTheContextWithATlsProducerWhenTheRelayIsOnAndTheBundleIsMounted(String protocol) {
+    void startsTheContextWithATlsProducerWhenTheBundleIsMountedAndTheRelayIsOn(String protocol) {
         contextRunner
                 .withPropertyValues("DB_SSL_ROOT_CERT=" + BUNDLE, "risk.outbox.relay.enabled=true",
                         "spring.kafka.security.protocol=" + protocol)
                 .run(context -> assertThat(context).hasNotFailed().hasSingleBean(KafkaTlsGuard.class));
     }
 
-    @Test
-    void staysInactiveWhileTheRelayIsOffBecauseNothingPublishes() {
-        contextRunner
-                .withPropertyValues("DB_SSL_ROOT_CERT=" + BUNDLE, "spring.kafka.security.protocol=PLAINTEXT")
-                .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(KafkaTlsGuard.class));
+    /** The chart's defaults (KAFKA_SECURITY_PROTOCOL SASL_SSL, OUTBOX_RELAY_ENABLED "false") still start a pod. */
+    @ParameterizedTest
+    @ValueSource(strings = {"SASL_SSL", "SSL"})
+    void startsTheContextWithATlsProducerWhenTheBundleIsMountedAndTheRelayIsOff(String protocol) {
         contextRunner
                 .withPropertyValues("DB_SSL_ROOT_CERT=" + BUNDLE, "risk.outbox.relay.enabled=false",
-                        "spring.kafka.security.protocol=PLAINTEXT")
-                .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(KafkaTlsGuard.class));
+                        "spring.kafka.security.protocol=" + protocol)
+                .run(context -> assertThat(context).hasNotFailed().hasSingleBean(KafkaTlsGuard.class));
     }
 
     /** Local runs and tests have no RDS bundle (and application.yml defaults to PLAINTEXT) and keep working. */
@@ -127,7 +144,9 @@ class KafkaTlsGuardTest {
                 .withPropertyValues("risk.outbox.relay.enabled=true", "spring.kafka.security.protocol=PLAINTEXT")
                 .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(KafkaTlsGuard.class));
         contextRunner
-                .withPropertyValues("risk.outbox.relay.enabled=true")
+                .withPropertyValues("spring.kafka.security.protocol=PLAINTEXT")
+                .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(KafkaTlsGuard.class));
+        contextRunner
                 .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(KafkaTlsGuard.class));
     }
 
@@ -138,7 +157,6 @@ class KafkaTlsGuardTest {
     private static MockEnvironment environment(String protocol) {
         return new MockEnvironment()
                 .withProperty("DB_SSL_ROOT_CERT", BUNDLE)
-                .withProperty("risk.outbox.relay.enabled", "true")
                 .withProperty("spring.kafka.security.protocol", protocol);
     }
 }
