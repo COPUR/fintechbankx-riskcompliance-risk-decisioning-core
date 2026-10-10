@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "risk.name" . }}
+  name: {{ include "risk.name" . | quote }}
   labels:
     {{- include "risk.labels" . | nindent 4 }}
 spec:
@@ -10,8 +10,8 @@ spec:
     {{- include "risk.selectorLabels" . | nindent 4 }}
   ports:
     - name: http
-      port: {{ .Values.service.port }}
+      port: {{ int .Values.service.port }}
       targetPort: http
     - name: http-management
-      port: {{ .Values.service.managementPort }}
+      port: {{ int .Values.service.managementPort }}
       targetPort: http-management

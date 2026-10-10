@@ -127,10 +127,12 @@ jobs:
           done
           # The guard lets SPRING_DATASOURCE_USERNAME and _PASSWORD through; this chart does not: the runtime role is
           # config.DB_USERNAME and its password comes only from the ExternalSecret, never from the ConfigMap.
-          for key in SPRING_DATASOURCE_USERNAME SPRING_DATASOURCE_PASSWORD 'spring\.datasource\.password'; do
-            reject_render "config.${key//\\/} must not be set: the runtime role is config.DB_USERNAME" \
+          # (the guard's exemption is the exact name in any case; other spellings it refuses itself).
+          for key in SPRING_DATASOURCE_USERNAME SPRING_DATASOURCE_PASSWORD spring_datasource_password; do
+            reject_render "config.$key must not be set: the runtime role is config.DB_USERNAME" \
               --set "config.$key=x"
           done
+          reject_render "config.spring.datasource.password $override" --set 'config.spring\.datasource\.password=x'
           # SPRING_FLYWAY_LOCATIONS would point validate-at-start at another migration set (an empty one validates
           # nothing), so a pending or changed migration would no longer keep a pod from starting.
           reject_render "config.SPRING_FLYWAY_LOCATIONS $override" \
@@ -285,11 +287,12 @@ jobs:
           reject_render "config key \"OIDC_AUDIENCE\\nSPRING_CONFIG_IMPORT\" is not a ConfigMap key" -f "$inject"
           printf '%s\n' 'config:' "  'SERVICE_CALLERS\"': x" > "$inject"
           reject_render 'is not a ConfigMap key' -f "$inject"
-          printf '%s\n' 'externalSecret:' '  remoteSecretName: "ci/risk-decisioning-service/db-app\n        property: username"' > "$inject"
-          reject_render "externalSecret.data remoteSecretName" -f "$inject"
-          reject_render "must not contain a control character" -f "$inject"
-          printf '%s\n' 'externalSecret:' '  migrationSecretName: "ci/risk-decisioning-service/db-migration\n        property: x"' > "$inject"
-          reject_render "externalSecret.extraData remoteSecretName" -f "$inject"
+          # (--set-file, because it overrides the --set of $args; the file's text, newline included, is the value).
+          printf '%s\n' 'ci/risk-decisioning-service/db-app' '        property: username' > "$inject"
+          reject_render "externalSecret.data remoteSecretName" --set-file "externalSecret.remoteSecretName=$inject"
+          reject_render "must not contain a control character" --set-file "externalSecret.remoteSecretName=$inject"
+          printf '%s\n' 'ci/risk-decisioning-service/db-migration' '        property: x' > "$inject"
+          reject_render "externalSecret.extraData remoteSecretName" --set-file "externalSecret.migrationSecretName=$inject"
           printf '%s\n' 'config:' '  SERVICE_CALLERS: "svc-a\nSPRING_CONFIG_IMPORT: file:/tmp/x"' \
             '  DB_USERNAME: "risk_decisioning_app\n              - name: SPRING_DATASOURCE_URL"' > "$inject"
           helm template ci "$chart" $args -f "$inject" | python3 -c '
@@ -357,6 +360,7 @@ jobs:
           kubeconform_args=(-strict -summary -kubernetes-version 1.30.0 -schema-location "$k8s" -schema-location "$crds")
           kubeconform "${kubeconform_args[@]}" - <<<"$rendered"
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args | kubeconform "${kubeconform_args[@]}" -
+          helm template ci "$chart" $args $strimzi | kubeconform "${kubeconform_args[@]}" -
           python3 -c 'import yaml' 2>/dev/null || pip install --user pyyaml==6.0.2
           sa="$(helm show values "$chart" | python3 -c 'import sys, yaml; print(yaml.safe_load(sys.stdin)["serviceAccount"]["name"])')"
           # Pod label the platform outbox alert rules key on (service_id).
@@ -402,14 +406,15 @@ jobs:
             echo "chart must not ship mesh or network policies or its own SecretStore" >&2
             exit 1
           fi
-          grep -q "name: aws-secrets-manager" <<<"$rendered"
-          grep -q "app: risk-decisioning-service" <<<"$rendered"
+          # (the templates quote every interpolated value, so match with or without quotes)
+          grep -qE 'name: "?aws-secrets-manager"?$' <<<"$rendered"
+          grep -qE 'app: "?risk-decisioning-service"?$' <<<"$rendered"
           # The relay stays off until the mesh contract gives namespace risk MSK egress (runbook step 4).
-          if ! grep -q 'OUTBOX_RELAY_ENABLED: "false"' <<<"$rendered"; then
+          if ! grep -qE '"?OUTBOX_RELAY_ENABLED"?: "false"' <<<"$rendered"; then
             echo "chart must default OUTBOX_RELAY_ENABLED to \"false\"" >&2
             exit 1
           fi
-          grep -q 'OUTBOX_RELAY_ENABLED: "true"' <<<"$(helm template ci "$chart" $args --set config.OUTBOX_RELAY_ENABLED=true)"
+          grep -qE '"?OUTBOX_RELAY_ENABLED"?: "true"' <<<"$(helm template ci "$chart" $args --set config.OUTBOX_RELAY_ENABLED=true)"
           # Metric common tags: app = service account, squad = risk (platform outbox alert rules).
           grep -q "METRICS_APP: \"$sa\"" <<<"$rendered"
           grep -q 'METRICS_SQUAD: "risk"' <<<"$rendered"
@@ -426,7 +431,7 @@ jobs:
           ./scripts/ci/check-migration-job.py "$sa" <<<"$rendered"
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args | ./scripts/ci/check-migration-job.py "$sa"
           grep -q "secretKey: DB_MIGRATION_USERNAME" <<<"$rendered"
-          grep -q "name: risk-decisioning-service-db-migration" <<<"$rendered"
+          grep -qE 'name: "?risk-decisioning-service-db-migration"?$' <<<"$rendered"
           # ...and the check catches each way back to the old shape.
           mutated() {
             python3 -c '

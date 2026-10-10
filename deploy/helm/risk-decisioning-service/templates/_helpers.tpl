@@ -36,7 +36,7 @@ the name <service account>-db-migration.
 {{- end -}}
 
 {{- define "risk.migrationSelectorLabels" -}}
-app.kubernetes.io/name: {{ .Values.serviceAccount.name }}
+app.kubernetes.io/name: {{ .Values.serviceAccount.name | quote }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: db-migration
 {{- end -}}
@@ -97,71 +97,105 @@ capabilities:
 {{- define "risk.databaseCaVolume" -}}
 - name: database-ca
   configMap:
-    name: {{ .Values.databaseCa.configMapName }}
+    name: {{ .Values.databaseCa.configMapName | quote }}
     items:
-      - key: {{ .Values.databaseCa.key }}
-        path: {{ .Values.databaseCa.key }}
+      - key: {{ .Values.databaseCa.key | quote }}
+        path: {{ .Values.databaseCa.key | quote }}
 {{- end -}}
 
 {{- define "risk.databaseCaMount" -}}
 - name: database-ca
-  mountPath: {{ .Values.databaseCa.mountPath }}
+  mountPath: {{ .Values.databaseCa.mountPath | quote }}
   readOnly: true
 {{- end -}}
 
 
 {{/*
-Aurora TLS (cicd-templates 4f0f266): the database connection must verify the
-server certificate and host name against the mounted RDS CA bundle;
-sslmode=require encrypts but trusts any certificate.
+Datasource / TLS guard. fbx.guard is vendored unchanged from cicd-templates
+a4f0072 (_fbx_helpers.tpl, README "Vendoring the guard"); risk.guard is this
+chart's adapter and its own checks. deployment.yaml and migration-job.yaml
+both start with {{- include "risk.guard" . -}}, so neither workload renders
+from values the other would refuse.
 
-The query after the first "?" is read the way PgJDBC reads it (split on "&",
-name before the first "="). PgJDBC lets the last of repeated parameters win,
-so sslmode and sslrootcert must each appear exactly once, spelled in lower
-case: PgJDBC reads parameter names case-sensitively, so SSLMODE=verify-full
-would be ignored, and any differently-cased spelling of a checked name is
-refused. A custom sslfactory, sslfactoryarg, sslhostnameverifier or
-sslpasswordcallback would replace the verification, and service= would load
-host, port and TLS settings from a pg_service.conf entry the chart cannot see.
-Values are compared undecoded (PgJDBC decodes values, not names), so an encoded
-value fails closed. The ConfigMap exports every config key, so every Spring
-datasource, Flyway, Liquibase and R2DBC key (SPRING_DATASOURCE_*, SPRING_FLYWAY_*
-including SPRING_FLYWAY_LOCATIONS, which would point validate-at-start at
-another migration set, SPRING_LIQUIBASE_*, SPRING_R2DBC_*) and
-SPRING_APPLICATION_JSON are refused by prefix: they could override DB_URL or
-the credential. So is every SPRING_CONFIG_* key (import, location,
-additional-location, name, also indexed), which picks or loads a file or
-configtree that can set the URL. JVM option variables
-(JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, _JAVA_OPTIONS, JAVA_OPTS) are refused
-because they set system properties or load an agent before application.yml is
-read; the image fixes them. LOGGING_LEVEL_* is refused because a log level is
-not an install-time value: LOGGING_LEVEL_ORG_POSTGRESQL=TRACE would write the
-wire protocol, with row data, to the pod log. DB_SSL_ROOT_CERT is refused,
-empty or not: it is the only switch of the TLS startup assertion
-(DatabaseTlsGuard and KafkaTlsGuard both run whenever it is set, relay on or
-off), and the chart sets it from the mounted bundle on the Deployment and the
-migration Job. SPRING_PROFILES_ACTIVE, SPRING_PROFILES_INCLUDE and
-SPRING_PROFILES_DEFAULT (also indexed) and any SPRING_PROFILES_GROUP_<name>
-(a group that names local activates it with the group's profile) must not name
-the local profile (a developer machine with plain-text local services) in any
-case or position of the comma list. Each key is
-normalised before matching, the way Spring's relaxed binding reads it from the environment: upper
-case, then every non-alphanumeric character dropped, so dash, dot, underscore
-and index spellings (spring.config.import[0], SPRING_CONFIG_IMPORT_0) all
-match. The chart renders no Spring config import of its own; a configtree would
-be allowed only as a chart-rendered value on the fixed mount
-optional:configtree:/etc/fintechbankx/config/, never from a values key. The
-application's DatabaseTlsGuard repeats the URL checks at startup.
+Adapter: every route of this chart that feeds the pod's environment.
+  config           .Values.config (the ConfigMap the app loads with envFrom;
+                   the migration Job's DB_URL and DB_USERNAME come from it)
+  extraEnv         none: the chart renders only its own env entries
+                   (DB_SSL_ROOT_CERT, SPRING_PROFILES_ACTIVE, KAFKA_TLS_*,
+                   and the Job's DB_URL / DB_USERNAME from config)
+  envFrom, extraEnvFrom
+                   .Values.envFrom, .Values.extraEnvFrom: not values of this
+                   chart, so the guard refuses them when set
+  javaToolOptions  none: the image fixes JVM options (a value is refused below)
+  databaseCa       enabled always (no switch: this service always has a
+                   PostgreSQL database), mountPath and key from .Values.databaseCa;
+                   the guard requires DB_URL's sslrootcert=<mountPath>/<key>
+  kafka.runtime    .Values.kafka.runtime (msk or strimzi)
+  externalSecret   enabled from .Values.externalSecret.enabled; data is the
+                   runtime secret this chart renders (SPRING_DATASOURCE_PASSWORD
+                   <- remoteSecretName "password"), extraData the migration
+                   secret (DB_MIGRATION_USERNAME / _PASSWORD <- migrationSecretName),
+                   dataFrom .Values.externalSecret.dataFrom (refused when set)
+
+The guard refuses, in every relaxed-binding spelling: datasource, Flyway,
+Liquibase and R2DBC names (but not SPRING_DATASOURCE_USERNAME/_PASSWORD),
+spring.application.json, JDBC URL and TLS parameter names (DB_SSL_ROOT_CERT
+included: the chart renders it from databaseCa, and it arms DatabaseTlsGuard
+and KafkaTlsGuard), DB_URL in another spelling, spring.config.*,
+spring.profiles.* (the chart renders the only profile, from kafka.runtime),
+spring.ssl.* and SSL bundles, fintechbankx.tls.*, a JVM options value that
+names a datasource, TLS or config property, a Kafka security.protocol other
+than SASL_SSL (msk) or SSL (strimzi) and an endpoint identification
+algorithm other than https; it parses every jdbc:postgresql: value the way
+PgJDBC does (exactly one sslmode=verify-full and one sslrootcert=<bundle>, no
+sslfactory, sslfactoryarg, sslhostnameverifier, sslpasswordcallback or
+service, lower-case TLS names, no '${' or '$('), and refuses config keys and
+secret keys that are not ConfigMap / Secret keys and secret names with a
+control character.
+
+This chart adds what the guard allows but this service must not take from
+values: SPRING_DATASOURCE_USERNAME/_PASSWORD in config (the runtime role is
+config.DB_USERNAME, its password only in the ExternalSecret); any JVM option
+name in config, whatever the value (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS,
+_JAVA_OPTIONS, JAVA_OPTS: the image fixes them); LOGGING_LEVEL_* (a log level
+is not an install-time value: LOGGING_LEVEL_ORG_POSTGRESQL=TRACE would write
+the wire protocol, with row data, to the pod log); a DB_URL other than plain
+jdbc:postgresql: (the service connects with PgJDBC, no wrapper);
+extraEnv, env and javaToolOptions values (the chart renders none); a
+kafka.runtime other than msk or strimzi; strimzi without kafkaTls.secretName;
+and a serviceAccount.name that is not a DNS label (it is written into labels,
+names and the secret path rules). Config keys are normalised for these
+checks the way relaxed binding reads them from the environment: upper case,
+every non-alphanumeric character dropped.
 */}}
-{{- define "risk.validateDatabaseTls" -}}
-{{- $bundle := "/etc/fintechbankx/rds-ca/global-bundle.pem" -}}
+{{- define "risk.guard" -}}
+{{- $es := .Values.externalSecret -}}
+{{- include "fbx.guard" (dict "Values" (dict
+      "config" .Values.config
+      "extraEnv" (list)
+      "envFrom" .Values.envFrom
+      "extraEnvFrom" .Values.extraEnvFrom
+      "javaToolOptions" ""
+      "databaseCa" (dict "enabled" true "mountPath" .Values.databaseCa.mountPath "key" .Values.databaseCa.key)
+      "kafka" (dict "runtime" ((.Values.kafka | default dict).runtime | default ""))
+      "externalSecret" (dict "enabled" $es.enabled
+        "data" (list (dict "secretKey" "SPRING_DATASOURCE_PASSWORD" "property" "password" "remoteSecretName" $es.remoteSecretName))
+        "extraData" (list
+          (dict "secretKey" "DB_MIGRATION_USERNAME" "property" "username" "remoteSecretName" $es.migrationSecretName)
+          (dict "secretKey" "DB_MIGRATION_PASSWORD" "property" "password" "remoteSecretName" $es.migrationSecretName))
+        "dataFrom" $es.dataFrom))) -}}
+{{- range $route := list "extraEnv" "env" "javaToolOptions" -}}
+{{- if index $.Values $route -}}
+{{- fail (printf "%s is not a value of this chart: it renders no such env route (config keys go through the datasource/TLS guard; the image fixes JVM options)" $route) -}}
+{{- end -}}
+{{- end -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" (toString .Values.serviceAccount.name)) -}}
+{{- fail (printf "serviceAccount.name must be a DNS label ([a-z0-9-], at most 63 characters), got %q" (toString .Values.serviceAccount.name)) -}}
+{{- end -}}
 {{- range $key, $value := .Values.config -}}
 {{- $name := upper (regexReplaceAll "[^A-Za-z0-9]" (toString $key) "") -}}
-{{- if regexMatch "^SPRING(DATASOURCE|FLYWAY|LIQUIBASE|R2DBC|APPLICATIONJSON)" $name -}}
-{{- fail (printf "config.%s must not be set: config.DB_URL is the only database URL (sslmode=verify-full)" $key) -}}
-{{- end -}}
-{{- if hasPrefix "SPRINGCONFIG" $name -}}
-{{- fail (printf "config.%s must not be set: it loads configuration that can override config.DB_URL" $key) -}}
+{{- if regexMatch "^SPRINGDATASOURCE(USERNAME|PASSWORD)$" $name -}}
+{{- fail (printf "config.%s must not be set: the runtime role is config.DB_USERNAME and its password comes only from the ExternalSecret" $key) -}}
 {{- end -}}
 {{- if regexMatch "^(JAVATOOLOPTIONS|JDKJAVAOPTIONS|JAVAOPTIONS|JAVAOPTS)$" $name -}}
 {{- fail (printf "config.%s must not be set: JVM options are fixed by the image" $key) -}}
@@ -169,52 +203,32 @@ application's DatabaseTlsGuard repeats the URL checks at startup.
 {{- if hasPrefix "LOGGINGLEVEL" $name -}}
 {{- fail (printf "config.%s must not be set: log levels are not install-time values" $key) -}}
 {{- end -}}
-{{- if eq $name "DBSSLROOTCERT" -}}
-{{- fail (printf "config.%s must not be set: the TLS startup assertion has no off switch (the chart sets DB_SSL_ROOT_CERT from the mounted bundle)" $key) -}}
 {{- end -}}
-{{- if regexMatch "^SPRINGPROFILES((ACTIVE|INCLUDE|DEFAULT)[0-9]*|GROUP.*)$" $name -}}
-{{- range $profile := splitList "," (toString $value) -}}
-{{- if eq (lower (trim $profile)) "local" -}}
-{{- fail (printf "config.%s must not activate the local profile: it is for a developer machine, never for a cluster" $key) -}}
+{{- $url := trim (toString (default "" (index .Values.config "DB_URL"))) -}}
+{{- if and $url (not (hasPrefix "jdbc:postgresql:" $url)) -}}
+{{- fail "config.DB_URL must be a jdbc:postgresql: URL: the service connects with PgJDBC, without a wrapper driver" -}}
 {{- end -}}
+{{- if not (include "fbx.kafkaProfile" .) -}}
+{{- fail "kafka.runtime must be msk or strimzi: this service always configures a Kafka producer (the outbox relay)" -}}
 {{- end -}}
-{{- end -}}
-{{- end -}}
-{{- $url := toString (default "" (index .Values.config "DB_URL")) -}}
-{{- if $url -}}
-{{- if not (hasPrefix "jdbc:postgresql:" $url) -}}
-{{- fail (printf "config.DB_URL must be a jdbc:postgresql URL with sslmode=verify-full (with sslrootcert=%s)" $bundle) -}}
-{{- end -}}
-{{- $query := "" -}}
-{{- if contains "?" $url -}}
-{{- $query = (splitn "?" 2 $url)._1 -}}
-{{- end -}}
-{{- $sslmode := list -}}
-{{- $rootcert := list -}}
-{{- range $param := splitList "&" $query -}}
-{{- $kv := splitn "=" 2 $param -}}
-{{- $k := $kv._0 -}}
-{{- $v := toString (default "" $kv._1) -}}
-{{- $overrides := list "sslfactory" "sslfactoryarg" "sslhostnameverifier" "sslpasswordcallback" -}}
-{{- if and (ne $k (lower $k)) (has (lower $k) (concat (list "sslmode" "sslrootcert" "service") $overrides)) -}}
-{{- fail (printf "config.DB_URL must not set %s: PgJDBC applies only the lower-case parameter name, so it would be ignored (and could pass for %s)" $k (lower $k)) -}}
-{{- else if eq $k "sslmode" -}}
-{{- $sslmode = append $sslmode $v -}}
-{{- else if eq $k "sslrootcert" -}}
-{{- $rootcert = append $rootcert $v -}}
-{{- else if has $k $overrides -}}
-{{- fail (printf "config.DB_URL must not set %s: it replaces certificate or host name verification" $k) -}}
-{{- else if eq $k "service" -}}
-{{- fail (printf "config.DB_URL must not set %s: it loads host, port and TLS settings from a pg_service.conf entry the chart cannot see" $k) -}}
+{{- if and (eq (toString .Values.kafka.runtime) "strimzi") (not .Values.kafkaTls.secretName) -}}
+{{- fail "kafkaTls.secretName is required for kafka.runtime strimzi: the kafka-strimzi profile reads the client certificate from KAFKA_TLS_CERT, KAFKA_TLS_KEY and KAFKA_TLS_CA" -}}
 {{- end -}}
 {{- end -}}
-{{- if ne (toJson $sslmode) (toJson (list "verify-full")) -}}
-{{- fail (printf "config.DB_URL must use sslmode=verify-full, exactly once (with sslrootcert=%s)" $bundle) -}}
+
+{{/*
+An env[].value the chart writes. Kubernetes expands $(VAR) in env values from
+earlier entries and envFrom keys after the render, so the pod would get text
+nobody checked (the migration Job's DB_USERNAME could become the owner's
+name); refuse it, then quote the value. Called as
+include "risk.envValue" (list "<NAME>" <value>).
+*/}}
+{{- define "risk.envValue" -}}
+{{- $value := toString (index . 1) -}}
+{{- if contains "$(" $value -}}
+{{- fail (printf "%s must not contain '$(': Kubernetes would expand it from other env entries after the render" (index . 0)) -}}
 {{- end -}}
-{{- if ne (toJson $rootcert) (toJson (list $bundle)) -}}
-{{- fail (printf "config.DB_URL must set sslrootcert=%s, exactly once" $bundle) -}}
-{{- end -}}
-{{- end -}}
+{{- $value | quote -}}
 {{- end -}}
 
 {{- define "risk.databaseCaFile" -}}

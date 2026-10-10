@@ -170,7 +170,8 @@ risk:
 ---
 # Amazon MSK with IAM client authentication (SASL_SSL / AWS_MSK_IAM). The pod's
 # IRSA role (deploy/terraform) supplies the credentials. Activated with
-# SPRING_PROFILES_ACTIVE=kafka-msk in the Helm values; local runs use PLAINTEXT.
+# SPRING_PROFILES_ACTIVE=kafka-msk, which the chart renders from kafka.runtime: msk;
+# local runs use PLAINTEXT.
 spring:
   config:
     activate:
@@ -186,7 +187,8 @@ spring:
 ---
 # In-cluster Strimzi (non-AWS clusters): mutual TLS with the KafkaUser
 # certificate. KAFKA_TLS_CERT, KAFKA_TLS_KEY and KAFKA_TLS_CA hold PEM content
-# mapped from Secret kafka-client-tls (secretKeyRef); no keystore files.
+# mapped from the Secret kafkaTls.secretName (secretKeyRef; the chart renders them
+# with kafka.runtime: strimzi); no keystore files.
 spring:
   config:
     activate:
