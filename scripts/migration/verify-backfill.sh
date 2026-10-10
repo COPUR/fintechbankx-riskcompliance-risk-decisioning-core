@@ -25,9 +25,13 @@ done
 psql_q -d "$src_db" -f "$root/db/backfill/test/monolith_fixture.sql"
 
 psql_q -d "$dst_db" -c "CREATE SCHEMA $schema"
+# Flyway placeholders, filled the way Flyway fills them in the migration Job: the
+# runtime role is the connecting user here (a single-user run, so V11 grants nothing).
+runtime_role="${PGUSER:-$(id -un)}"
 # Version order, as Flyway applies them: a shell glob puts V10 before V2.
 find "$root/risk-infrastructure/src/main/resources/db/migration" -name 'V*.sql' | sort -V | while read -r migration; do
-  PGOPTIONS="-c search_path=$schema" psql_q -d "$dst_db" -f "$migration"
+  sed "s/\${runtime_role}/$runtime_role/g" "$migration" \
+    | PGOPTIONS="-c search_path=$schema" psql_q -d "$dst_db" -f -
 done
 
 for run in 1 2; do
