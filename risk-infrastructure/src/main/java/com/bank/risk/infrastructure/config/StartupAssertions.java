@@ -25,7 +25,10 @@ import org.springframework.core.type.AnnotatedTypeMetadata;
  * shipped application*.yml.</li>
  * </ul>
  * When they are off, {@link OffWarning} logs it at WARN before any connection
- * exists.
+ * exists. The service's runtime role assertion (RuntimeRoleGuard, bootstrap
+ * module) is off with the local profile only (a single-user local run is its
+ * own schema owner): tests connect as a least-privilege runtime role and need
+ * no switch for it, so the test property leaves it on ({@link NotLocal}).
  */
 public final class StartupAssertions {
 
@@ -38,10 +41,14 @@ public final class StartupAssertions {
     private StartupAssertions() {
     }
 
+    /** The TLS assertions: on unless the local profile or the test switch turns them off. */
     public static boolean enabled(Environment environment) {
-        boolean local = environment.acceptsProfiles(Profiles.of(LOCAL_PROFILE));
         boolean switchedOff = "false".equals(environment.getProperty(ENFORCE_PROPERTY, "").trim());
-        return !local && !switchedOff;
+        return !local(environment) && !switchedOff;
+    }
+
+    public static boolean local(Environment environment) {
+        return environment.acceptsProfiles(Profiles.of(LOCAL_PROFILE));
     }
 
     /** {@code @Conditional}: the assertions are on (the default). */
@@ -57,6 +64,14 @@ public final class StartupAssertions {
         @Override
         public boolean matches(ConditionContext context, AnnotatedTypeMetadata metadata) {
             return !enabled(context.getEnvironment());
+        }
+    }
+
+    /** {@code @Conditional}: not the local profile (the runtime role assertion; the test switch leaves it on). */
+    public static final class NotLocal implements Condition {
+        @Override
+        public boolean matches(ConditionContext context, AnnotatedTypeMetadata metadata) {
+            return !local(context.getEnvironment());
         }
     }
 

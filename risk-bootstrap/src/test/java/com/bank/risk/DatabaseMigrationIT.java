@@ -73,6 +73,8 @@ class DatabaseMigrationIT {
             assertThat(job.getBeanNamesForType(OutboxRelay.class)).as("no outbox relay").isEmpty();
             assertThat(job.getBeanNamesForType(DatabaseTlsGuard.class))
                 .as("the TLS guard is off only through the test switch (the test database has no TLS)").isEmpty();
+            assertThat(job.getBeanNamesForType(RuntimeRoleGuard.class))
+                .as("no runtime role guard: the Job connects as the schema owner on purpose").isEmpty();
         }
 
         assertThat(appliedVersions(JOB_SCHEMA)).isEqualTo(resolvedMigrations());
@@ -188,6 +190,8 @@ class DatabaseMigrationIT {
 
         try (ConfigurableApplicationContext service = service()) {
             assertThat(service.isRunning()).isTrue();
+            assertThat(service.getBean(RuntimeRoleGuard.class))
+                .as("the runtime role assertion ran and passed (the TLS test switch leaves it on)").isNotNull();
         }
 
         assertThat(appliedVersions(SERVICE_SCHEMA)).isEqualTo(applied);

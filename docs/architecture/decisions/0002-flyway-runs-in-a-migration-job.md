@@ -70,9 +70,33 @@ run Flyway as a Job: its pods carry `app.kubernetes.io/name=<service account>`
    checks the schema history and the service refuses to start while a
    migration is pending or an applied one differs. V11 grants the runtime role
    `SELECT` only on `flyway_schema_history`, so it can read the history but not
-   record, repair or remove a migration. Tests keep `migrate` as the owner
-   (`PostgresTestDatabase`). `DatabaseMigrationIT` covers the Job and the
-   service. Any local, ephemeral or CI environment therefore runs the migrate
+   record, repair or remove a migration. After that validate, `RuntimeRoleGuard`
+   (`RuntimeRoleConfiguration`, service context only, never the Job) asserts on
+   the service's own pool that `current_user` is not a member of the owner of
+   the checked tables nor of the owner of the schema (`pg_has_role`, `MEMBER`),
+   owns no table in the schema, has no `CREATE` on it, and has, on
+   `risk_assessment` (the decisions of record), no `UPDATE`, `DELETE`,
+   `TRUNCATE` or `TRIGGER` and no `UPDATE` or `REFERENCES` on any of its
+   columns (`has_any_column_privilege`: a column-level grant is invisible to
+   `has_table_privilege`); on the tables V11 lets it only read,
+   `legacy_credit_risk_assessment` (written by the backfill role) and
+   `flyway_schema_history`, no `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE` or
+   `TRIGGER` and no column-level `INSERT`, `UPDATE` or `REFERENCES`.
+   `outbox_event` is not checked: V11 grants `UPDATE` and `DELETE` on it on
+   purpose (the relay marks, parks and purges rows). Any finding fails the
+   context without naming the role, the URL or a credential. The guard is a
+   `SmartInitializingSingleton` registered `@Lazy(false)`, so it runs once every
+   singleton exists, before the web server, and
+   `spring.main.lazy-initialization=true` (a config key the chart refuses)
+   cannot skip it; it depends on Flyway's initializer, so the validate still
+   runs first. It is on by default like the TLS assertions and off only with
+   the `local` profile (a single-user local run is its own owner); the test
+   switch `fintechbankx.tls.enforce=false` leaves it on, and the integration
+   tests run it as the least-privilege runtime role. Tests keep `migrate` as
+   the owner (`PostgresTestDatabase`). `DatabaseMigrationIT` covers the Job and
+   the service (a role granted the owner, a role with a stray `UPDATE`, lazy
+   initialization included), `RuntimeRoleGuardIT` each privilege with a scratch
+   role. Any local, ephemeral or CI environment therefore runs the migrate
    step before the application: `java -jar risk-decisioning-service.jar migrate`
    or `./gradlew :risk-bootstrap:bootRun --args=migrate`.
 7. **`externalSecret.migrationSecretName` is required, is not the runtime
@@ -85,7 +109,9 @@ run Flyway as a Job: its pods carry `app.kubernetes.io/name=<service account>`
    connection) fails the context when both `DB_MIGRATION_USERNAME` and
    `DB_USERNAME` are known and name the same role, case-insensitively, so a
    `db-migration` secret that holds the runtime credential exits the Job
-   with 1 (`DatabaseMigrationIT`, `MigrationRoleGuardTest`).
+   with 1 (`DatabaseMigrationIT`, `MigrationRoleGuardTest`). That guard
+   compares names only; the privileges behind the runtime role's name are
+   re-checked at every service start by `RuntimeRoleGuard` (item 6).
 8. CI (`deploy/helm`, `scripts/ci/check-migration-job.py`) asserts the split.
    The app pods never reference the `db-migration` secret. The Job exists with
    the hooks, limits, labels and sidecar opt-out above. No Service, PDB,
@@ -101,7 +127,9 @@ run Flyway as a Job: its pods carry `app.kubernetes.io/name=<service account>`
   database's master user, not a pod's environment. A DBA can still change
   rows; tamper evidence (for example a hash chain) is not built, and unlike
   compliance there is no insert-only trigger: the runtime role's grants alone
-  make `risk_assessment` insert-only.
+  make `risk_assessment` insert-only, which is why the service asserts those
+  grants itself at every start (`RuntimeRoleGuard`) instead of trusting the
+  bootstrap: a pod on an over-granted or owner-member role never serves.
 - Deploy order: the Job runs and must succeed before any new pod starts. Helm's
   `--timeout` must exceed the Job's `activeDeadlineSeconds` (600 s); use
   `--timeout 15m`.

@@ -23,7 +23,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * MigrationRoleGuard) are BeanFactoryPostProcessors, which the context
  * instantiates and runs before any bean, lazy or not; this test proves each
  * still refuses with lazy initialisation on (the chart also refuses every
- * spring.main.* config key, defence in depth).
+ * spring.main.* config key, defence in depth). RuntimeRoleGuard needs a
+ * migrated database and is an eager SmartInitializingSingleton; its lazy case
+ * is in DatabaseMigrationIT.
  *
  * <p>The contexts are started through SpringApplication, which is what
  * applies spring.main.lazy-initialization (an ApplicationContextRunner would
