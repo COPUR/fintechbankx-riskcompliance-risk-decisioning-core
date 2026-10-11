@@ -119,11 +119,14 @@ capabilities:
 
 
 {{/*
-Datasource / TLS guard. fbx.guard is vendored unchanged from cicd-templates
-a4f0072 (_fbx_helpers.tpl, README "Vendoring the guard"); risk.guard is this
-chart's adapter and its own checks. deployment.yaml and migration-job.yaml
-both start with {{- include "risk.guard" . -}}, so neither workload renders
-from values the other would refuse.
+Datasource / TLS guard. fbx.guard is _fbx_helpers.tpl, a whole, header-less
+copy of cicd-templates charts/fintechbankx-service/templates/_helpers.tpl at
+6b6c317 (README "Vendoring the guard"; CI step "Vendored platform guard" runs
+scripts/ci/verify-vendored-guard.sh on it); risk.guard is this chart's adapter
+and its own checks, and no define of this chart is named fbx.*.
+deployment.yaml and migration-job.yaml both start with
+{{- include "risk.guard" . -}}, so neither workload renders from values the
+other would refuse.
 
 Adapter: every route of this chart that feeds the pod's environment.
   config           .Values.config (the ConfigMap the app loads with envFrom;
@@ -136,8 +139,12 @@ Adapter: every route of this chart that feeds the pod's environment.
                    chart, so the guard refuses them when set
   javaToolOptions  none: the image fixes JVM options (a value is refused below)
   databaseCa       enabled always (no switch: this service always has a
-                   PostgreSQL database), mountPath and key from .Values.databaseCa;
-                   the guard requires DB_URL's sslrootcert=<mountPath>/<key>
+                   PostgreSQL database); mountPath, key and configMapName from
+                   .Values.databaseCa, the values risk.databaseCaVolume and
+                   risk.databaseCaMount write. The guard pins them to
+                   /etc/fintechbankx/rds-ca, global-bundle.pem and rds-ca-bundle
+                   (a null configMapName is refused as missing) and requires
+                   DB_URL's sslrootcert=<mountPath>/<key>
   kafka.runtime    .Values.kafka.runtime (msk or strimzi)
   externalSecret   enabled from .Values.externalSecret.enabled; data is the
                    runtime secret this chart renders (SPRING_DATASOURCE_PASSWORD
@@ -151,8 +158,13 @@ spring.application.json, JDBC URL and TLS parameter names (DB_SSL_ROOT_CERT
 included: the chart renders it from databaseCa, and DatabaseTlsGuard, on by
 default like KafkaTlsGuard, requires it), DB_URL in another spelling, spring.config.*,
 spring.profiles.* (the chart renders the only profile, from kafka.runtime),
-spring.ssl.* and SSL bundles, fintechbankx.tls.*, a JVM options value that
-names a datasource, TLS or config property, a Kafka security.protocol other
+spring.ssl.* and SSL bundles, fintechbankx.tls.*, Kafka client TLS names
+(spring.kafka[.<client>][.properties].ssl.*, except the value-checked
+endpoint identification algorithm), spring.data.mongodb.* and MONGODB_URI,
+KAFKA_TLS_* (only from a Secret: this chart renders them with secretKeyRef
+from kafkaTls.secretName), each name also in its property reading ('_' inside
+an element), a JVM options value that names a datasource, TLS, config, Kafka
+or MongoDB property, a Kafka security.protocol other
 than SASL_SSL (msk) or SSL (strimzi) and an endpoint identification
 algorithm other than https; it parses every jdbc:postgresql: value the way
 PgJDBC does (exactly one sslmode=verify-full and one sslrootcert=<bundle>, no
@@ -169,9 +181,10 @@ _JAVA_OPTIONS, JAVA_OPTS: the image fixes them); LOGGING_LEVEL_* (a log level
 is not an install-time value: LOGGING_LEVEL_ORG_POSTGRESQL=TRACE would write
 the wire protocol, with row data, to the pod log); FINTECHBANKXTLS* after
 normalisation (the guard refuses fintechbankx.tls.* only with a separator
-after fintechbankx and tls, so FINTECHBANKXTLSENFORCE would render:
-fintechbankx.tls.enforce=false is the test switch of the TLS startup
-assertions, with the local profile the only way off, neither for a cluster);
+after fintechbankx and tls; Spring Boot 3.3.6 binds fintechbankx.tls.enforce,
+the test switch of the TLS startup assertions, only from
+FINTECHBANKX_TLS_ENFORCE, so cicd-templates does not count
+FINTECHBANKXTLSENFORCE as a gap: defence in depth);
 a DB_URL other than plain
 jdbc:postgresql: (the service connects with PgJDBC, no wrapper);
 extraEnv, env and javaToolOptions values (the chart renders none); a
@@ -189,7 +202,8 @@ every non-alphanumeric character dropped.
       "envFrom" .Values.envFrom
       "extraEnvFrom" .Values.extraEnvFrom
       "javaToolOptions" ""
-      "databaseCa" (dict "enabled" true "mountPath" .Values.databaseCa.mountPath "key" .Values.databaseCa.key)
+      "databaseCa" (dict "enabled" true "mountPath" .Values.databaseCa.mountPath "key" .Values.databaseCa.key
+        "configMapName" .Values.databaseCa.configMapName)
       "kafka" (dict "runtime" ((.Values.kafka | default dict).runtime | default ""))
       "externalSecret" (dict "enabled" $es.enabled
         "data" (list (dict "secretKey" "SPRING_DATASOURCE_PASSWORD" "property" "password" "remoteSecretName" $es.remoteSecretName))

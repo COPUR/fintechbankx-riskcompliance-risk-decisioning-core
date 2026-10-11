@@ -49,7 +49,12 @@ podDisruptionBudget:
 # too) requires and verifies DB_URL against; KafkaTlsGuard is on by default as
 # well, relay on or off. Only the local profile and the test switch turn them
 # off, and the guard refuses both as values. There is no switch to turn the
-# mount off: this service always has a PostgreSQL database.
+# mount off: this service always has a PostgreSQL database. All three values
+# are pinned by the vendored guard (fbx.validateDatabaseCa): configMapName
+# rds-ca-bundle, key global-bundle.pem, mountPath /etc/fintechbankx/rds-ca; any
+# other value, or a null, fails the render (another ConfigMap or key replaces
+# the database trust anchor, another path can put a ConfigMap item where
+# Spring Boot reads config files).
 databaseCa:
   configMapName: rds-ca-bundle
   key: global-bundle.pem
@@ -57,7 +62,7 @@ databaseCa:
 
 # Non-secret runtime settings, rendered into a ConfigMap (keys and values quoted).
 # Every key and value goes through the datasource / TLS guard vendored from
-# cicd-templates a4f0072 (templates/_fbx_helpers.tpl, called through risk.guard
+# cicd-templates 6b6c317 (templates/_fbx_helpers.tpl, called through risk.guard
 # in _helpers.tpl) and this chart's own checks; the render fails otherwise.
 config:
   # Terraform output jdbc_url: jdbc:postgresql://<aurora-writer-endpoint>:5432/db_rsk_decisioning_<env>
@@ -70,7 +75,9 @@ config:
   # (DB_SSL_ROOT_CERT included: the chart sets it from the mounted bundle), DB_URL in another spelling,
   # SPRING_CONFIG_*, SPRING_PROFILES_* (the chart renders the only profile, from kafka.runtime below),
   # SPRING_SSL_* and SSL bundles, FINTECHBANKX_TLS_* (separator-free spellings such as FINTECHBANKXTLSENFORCE
-  # too, by this chart's own rule), JVM options (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS,
+  # too, by this chart's own rule), Kafka client TLS names (SPRING_KAFKA_[<client>_][PROPERTIES_]SSL_*, except the
+  # endpoint identification algorithm, which must be https), SPRING_DATA_MONGODB_*, MONGODB_URI, KAFKA_TLS_*
+  # (only from the kafkaTls Secret), JVM options (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS,
   # _JAVA_OPTIONS, JAVA_OPTS) and LOGGING_LEVEL_*; keys must be ConfigMap keys ([-._a-zA-Z0-9]+). The runbook
   # ("Deployment prerequisite (Aurora TLS)") has the full list.
   DB_URL: ""
