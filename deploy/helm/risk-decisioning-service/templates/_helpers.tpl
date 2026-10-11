@@ -184,7 +184,13 @@ normalisation (the guard refuses fintechbankx.tls.* only with a separator
 after fintechbankx and tls; Spring Boot 3.3.6 binds fintechbankx.tls.enforce,
 the test switch of the TLS startup assertions, only from
 FINTECHBANKX_TLS_ENFORCE, so cicd-templates does not count
-FINTECHBANKXTLSENFORCE as a gap: defence in depth);
+FINTECHBANKXTLSENFORCE as a gap: defence in depth); SPRINGMAIN* after
+normalisation (spring.main.* changes how the application context starts:
+lazy-initialization can skip guards that run when a bean is created,
+allow-bean-definition-overriding can replace one, sources can add
+configuration; the startup guards are BeanFactoryPostProcessors, which lazy
+initialisation does not defer, and the guard does not cover the family:
+defence in depth);
 a DB_URL other than plain
 jdbc:postgresql: (the service connects with PgJDBC, no wrapper);
 extraEnv, env and javaToolOptions values (the chart renders none); a
@@ -232,6 +238,9 @@ every non-alphanumeric character dropped.
 {{- end -}}
 {{- if hasPrefix "FINTECHBANKXTLS" $name -}}
 {{- fail (printf "config.%s must not be set: fintechbankx.tls.enforce is the test switch of the TLS startup assertions, which are on by default; only the local profile and tests turn them off, never a cluster" $key) -}}
+{{- end -}}
+{{- if hasPrefix "SPRINGMAIN" $name -}}
+{{- fail (printf "config.%s must not be set: spring.main.* changes how the application context starts (lazy initialisation, bean definition overriding, sources); it is not an install-time value" $key) -}}
 {{- end -}}
 {{- end -}}
 {{- $url := trim (toString (default "" (index .Values.config "DB_URL"))) -}}
