@@ -40,6 +40,13 @@ class DatabaseMigrationIT {
     /** The test database has no TLS: the switch is for tests and the local profile only, never a shipped application*.yml. */
     private static final String TLS_ASSERTIONS_OFF = "--fintechbankx.tls.enforce=false";
     private static final String NO_BUNDLE = "DB_SSL_ROOT_CERT must name the mounted RDS CA bundle";
+    /** A scratch runtime role with more than V11 gives: what a wrong DBA bootstrap or a stray GRANT would produce. */
+    private static final String SCRATCH_ROLE = "risk_scratch_runtime_it";
+    private static final String SCRATCH_PASSWORD = "risk_scratch_runtime_it";
+    private static final String LEAST_PRIVILEGE =
+        "DB_USERNAME (the runtime role the service connects as) must be least privilege";
+    /** What SPRING_MAIN_LAZY_INITIALIZATION=true in a pod's environment would do: every ordinary singleton lazy. */
+    private static final String[] LAZY_INITIALIZATION = {"--spring.main.lazy-initialization=true"};
 
     private static JdbcTemplate owner;
 
@@ -186,6 +193,85 @@ class DatabaseMigrationIT {
         assertThat(appliedVersions(SERVICE_SCHEMA)).isEqualTo(applied);
     }
 
+    /**
+     * Review finding: MigrationRoleGuard compares role names only, and nothing re-checked the runtime role's
+     * privileges after the DBA bootstrap. A runtime role that can act as the schema owner could UPDATE, TRUNCATE
+     * or DROP the decisions of record, so the service must refuse to start as it, after Flyway's validate and on
+     * its own pool, naming the property and the finding, never the role or a credential.
+     */
+    @Test
+    void theServiceRefusesToStartAsARuntimeRoleThatIsAMemberOfTheSchemaOwner() {
+        theServiceRefusesToStartAsARuntimeRoleThatIsAMemberOfTheSchemaOwner(new String[0]);
+    }
+
+    /**
+     * spring.main.lazy-initialization=true (SPRING_MAIN_LAZY_INITIALIZATION, a config key the chart refuses) makes
+     * every ordinary singleton lazy: a guard that verified while its bean was created, and that nothing injects,
+     * would never run in the pod. The refusal must be the same with it on.
+     */
+    @Test
+    void theServiceRefusesToStartAsARuntimeRoleThatIsAMemberOfTheSchemaOwnerUnderLazyInitializationToo() {
+        theServiceRefusesToStartAsARuntimeRoleThatIsAMemberOfTheSchemaOwner(LAZY_INITIALIZATION);
+    }
+
+    private void theServiceRefusesToStartAsARuntimeRoleThatIsAMemberOfTheSchemaOwner(String... extra) {
+        assertThat(DatabaseMigration.run(job(SERVICE_SCHEMA))).isZero();
+        String tableOwner = owner.queryForObject(
+            "select tableowner from pg_tables where schemaname = ? and tablename = 'risk_assessment'",
+            String.class, SERVICE_SCHEMA);
+        scratchRole("in role " + tableOwner);
+        try {
+            assertThatThrownBy(() -> serviceAs(SCRATCH_ROLE, SCRATCH_PASSWORD, extra))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(LEAST_PRIVILEGE)
+                .hasMessageContaining("member of the owner")
+                .hasMessageNotContaining(SCRATCH_ROLE)
+                .hasMessageNotContaining(SCRATCH_PASSWORD)
+                .hasMessageNotContaining(tableOwner)
+                .hasMessageNotContaining(PostgresTestDatabase.url());
+        } finally {
+            dropScratchRole();
+        }
+    }
+
+    /** A V11-shaped role with one stray table grant on the decisions of record is refused as well, by privilege, not by name. */
+    @Test
+    void theServiceRefusesToStartAsARuntimeRoleThatMayUpdateDecisionsOfRecord() {
+        assertThat(DatabaseMigration.run(job(SERVICE_SCHEMA))).isZero();
+        scratchRole("");
+        owner.execute("grant usage on schema " + SERVICE_SCHEMA + " to " + SCRATCH_ROLE);
+        owner.execute("grant select, insert, update on " + SERVICE_SCHEMA + ".risk_assessment to " + SCRATCH_ROLE);
+        owner.execute("grant select on " + SERVICE_SCHEMA + ".legacy_credit_risk_assessment to " + SCRATCH_ROLE);
+        owner.execute("grant select, insert, update, delete on " + SERVICE_SCHEMA + ".outbox_event to " + SCRATCH_ROLE);
+        owner.execute("grant select on " + SERVICE_SCHEMA + ".flyway_schema_history to " + SCRATCH_ROLE);
+        try {
+            assertThatThrownBy(() -> serviceAs(SCRATCH_ROLE, SCRATCH_PASSWORD))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(LEAST_PRIVILEGE)
+                .hasMessageContaining("it has UPDATE on risk_assessment")
+                .hasMessageNotContaining(SCRATCH_ROLE);
+        } finally {
+            dropScratchRole();
+        }
+    }
+
+    private static void scratchRole(String options) {
+        dropScratchRole();
+        owner.execute("create role " + SCRATCH_ROLE + " login password '" + SCRATCH_PASSWORD + "' " + options);
+    }
+
+    private static void dropScratchRole() {
+        owner.execute("""
+            do $$
+            begin
+                if exists (select 1 from pg_roles where rolname = '%1$s') then
+                    execute 'drop owned by %1$s cascade';
+                    execute 'drop role %1$s';
+                end if;
+            end $$
+            """.formatted(SCRATCH_ROLE));
+    }
+
     @Test
     void theServiceRefusesToStartWhileAMigrationIsPending() {
         assertThat(DatabaseMigration.run(job(SERVICE_SCHEMA))).isZero();
@@ -221,15 +307,24 @@ class DatabaseMigrationIT {
 
     /** What a service pod gets (the runtime role only, no DB_MIGRATION_*, chart-default Flyway mode), assertions off for the test database. */
     private static ConfigurableApplicationContext service(String... extra) {
-        return tlsAssertingService(with(new String[] {TLS_ASSERTIONS_OFF}, extra));
+        return serviceAs(PostgresTestDatabase.RUNTIME_ROLE, PostgresTestDatabase.RUNTIME_PASSWORD, extra);
+    }
+
+    /** The same shape as another runtime role: what a wrong bootstrap or a stray grant would give the pods. */
+    private static ConfigurableApplicationContext serviceAs(String role, String password, String... extra) {
+        return tlsAssertingService(role, password, with(new String[] {TLS_ASSERTIONS_OFF}, extra));
     }
 
     /** The same, with the assertions on as in the chart. */
     private static ConfigurableApplicationContext tlsAssertingService(String... extra) {
+        return tlsAssertingService(PostgresTestDatabase.RUNTIME_ROLE, PostgresTestDatabase.RUNTIME_PASSWORD, extra);
+    }
+
+    private static ConfigurableApplicationContext tlsAssertingService(String role, String password, String... extra) {
         String[] arguments = with(new String[] {
             "--spring.datasource.url=" + PostgresTestDatabase.url(),
-            "--DB_USERNAME=" + PostgresTestDatabase.RUNTIME_ROLE,
-            "--spring.datasource.password=" + PostgresTestDatabase.RUNTIME_PASSWORD,
+            "--DB_USERNAME=" + role,
+            "--spring.datasource.password=" + password,
             "--server.port=0",
             "--management.server.port=0",
             "--risk.outbox.relay.enabled=false",
