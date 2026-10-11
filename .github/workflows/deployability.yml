@@ -211,6 +211,15 @@ jobs:
           for key in FINTECHBANKX_TLS_ENFORCE 'fintechbankx\.tls\.enforce' FINTECHBANKXTLS_ENFORCE FINTECHBANKXTLS; do
             reject_render "config.${key//\\/} is not allowed: $tls_switch" --set-string "config.$key=false"
           done
+          # spring.main.* changes how the application context starts: lazy initialisation can skip guards that run when
+          # a bean is created, bean definition overriding can replace a guard, sources can add configuration. The
+          # startup guards here are BeanFactoryPostProcessors (not skipped), but no install-time value may set the
+          # family: the chart's normalised rule refuses every key that starts with SPRINGMAIN (defence in depth).
+          for key in SPRING_MAIN_LAZY_INITIALIZATION 'spring\.main\.lazy-initialization' \
+                     'spring\.main\.allow-bean-definition-overriding' SPRING_MAIN_SOURCES; do
+            reject_render "config.${key//\\/} must not be set: spring.main.* changes how the application context starts" \
+              --set-string "config.$key=true"
+          done
           # The local profile is for a developer machine (plain-text local services). The chart renders the only
           # profile, SPRING_PROFILES_ACTIVE from kafka.runtime, so the guard refuses every spring.profiles.* config key,
           # in every spelling, whatever it names.
