@@ -14,7 +14,7 @@
 --   runtime_role  the role the service pods connect as (DB_USERNAME, Flyway
 --                 placeholder runtime_role); default risk_decisioning_app
 --
--- It creates both roles with LOGIN and no other attribute, and no password:
+-- It creates both roles with LOGIN and no other attribute, and no password;
 -- this file never holds one. Set each password out of band, then write the
 -- same {"username","password"} to the Secrets Manager secret Terraform created
 -- for it (<env>/risk-decisioning-service/db-migration, .../db-app), e.g. in

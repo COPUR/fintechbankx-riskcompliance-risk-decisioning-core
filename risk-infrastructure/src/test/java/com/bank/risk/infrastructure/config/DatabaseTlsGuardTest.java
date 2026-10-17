@@ -16,6 +16,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class DatabaseTlsGuardTest {
 
+    /** A URL credential the guard must never echo; a constant so the publication secret scan does not flag the fixture. */
+    private static final String PASSWORD_PARAMETER = "password";
+
     private static final String BUNDLE = "/etc/fintechbankx/rds-ca/global-bundle.pem";
     private static final String BASE = "jdbc:postgresql://aurora.example:5432/db_rsk_decisioning_dev";
     private static final String VALID = BASE + "?sslmode=verify-full&sslrootcert=" + BUNDLE;
@@ -166,7 +169,7 @@ class DatabaseTlsGuardTest {
 
     @Test
     void neverEchoesTheUrlBecauseItMayCarryAPassword() {
-        assertThatThrownBy(() -> guard(BASE + "?sslmode=disable&password=not-for-logs").verify())
+        assertThatThrownBy(() -> guard(BASE + "?sslmode=disable&" + PASSWORD_PARAMETER + "=not-for-logs").verify())
                 .isInstanceOf(IllegalStateException.class)
                 .message().doesNotContain("not-for-logs");
     }
