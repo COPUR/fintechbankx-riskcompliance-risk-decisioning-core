@@ -190,7 +190,10 @@ lazy-initialization can skip guards that run when a bean is created,
 allow-bean-definition-overriding can replace one, sources can add
 configuration; the startup guards are BeanFactoryPostProcessors, which lazy
 initialisation does not defer, and the guard does not cover the family:
-defence in depth);
+defence in depth); SPRINGJPA*, SPRINGSQLINIT*, HIBERNATE* and
+JAKARTA/JAVAXPERSISTENCE* after normalisation (Hibernate schema management and
+SQL init would change the schema at startup, before the runtime-role check;
+the schema belongs to the migration Job);
 a DB_URL other than plain
 jdbc:postgresql: (the service connects with PgJDBC, no wrapper);
 extraEnv, env and javaToolOptions values (the chart renders none); a
@@ -241,6 +244,9 @@ every non-alphanumeric character dropped.
 {{- end -}}
 {{- if hasPrefix "SPRINGMAIN" $name -}}
 {{- fail (printf "config.%s must not be set: spring.main.* changes how the application context starts (lazy initialisation, bean definition overriding, sources); it is not an install-time value" $key) -}}
+{{- end -}}
+{{- if regexMatch "^(SPRINGJPA|SPRINGSQLINIT|HIBERNATE|JAKARTAPERSISTENCE|JAVAXPERSISTENCE)" $name -}}
+{{- fail (printf "config.%s must not be set: the schema belongs to the migration Job; Hibernate schema management and SQL init would change it at startup, before the runtime-role check" $key) -}}
 {{- end -}}
 {{- end -}}
 {{- $url := trim (toString (default "" (index .Values.config "DB_URL"))) -}}
