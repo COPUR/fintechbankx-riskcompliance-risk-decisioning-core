@@ -1,5 +1,7 @@
 package com.bank.risk.infrastructure.persistence;
 
+import com.bank.risk.domain.PaymentType;
+import com.bank.risk.domain.port.in.RiskEvaluationCommand;
 import com.bank.risk.domain.RiskAssessment;
 import com.bank.risk.domain.RiskDecision;
 import org.junit.jupiter.api.Test;
@@ -15,7 +17,7 @@ class InMemoryRiskAssessmentRepositoryTest {
 
     @Test
     void shouldSaveAndFindByTransactionId() {
-        RiskAssessment assessment = RiskAssessment.create("TX-1", new BigDecimal("10"), "AED", 20, RiskDecision.ALLOW, List.of());
+        RiskAssessment assessment = RiskAssessment.create(new RiskEvaluationCommand("TX-1", new BigDecimal("10"), "AED", false, 0, "svc-pay-initiation-settlement", PaymentType.TRANSFER), 20, RiskDecision.ALLOW, List.of(), "rsk-policy-v2");
 
         repository.save(assessment);
 

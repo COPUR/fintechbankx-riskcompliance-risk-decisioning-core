@@ -1,0 +1,11 @@
+# Accepted 2026-10-08 with the role-agent review of PR #13 (fail-closed risk inputs): an omitted highRiskCountry was
+# recorded as false, the lowest-risk value, in the insert-only decision of record. It is now required and an omission
+# is a 400. The only SERVICE caller, svc-pay-initiation-settlement, must always send it (relayed to the payments owner).
+# Delete this file in the first PR after this one merges (scripts/ci/oasdiff-breaking.sh enforces it).
+POST /api/v1/risk/assess the request property 'highRiskCountry' became required
+# Accepted 2026-10-08 with regression finding LP-05 (pre-release spec): rsk-policy-v3 restores the monolith's refusal of
+# a MOBILE_PAYMENT above 5000 USD, which needs the payment type. It is required and fails closed like the other risk
+# facts; svc-pay-initiation-settlement must send its PaymentType value (relayed to the payments owner).
+# Release order: payments 8a1a3ea, which sends paymentType, deploys before or with this risk head; an older payments
+# build gets a 400 for every assessment.
+POST /api/v1/risk/assess added the new required request property 'paymentType'

@@ -3,42 +3,69 @@ apply plugin: 'jacoco'
 description = 'Risk Infrastructure - Web and persistence adapters for risk context'
 
 dependencies {
-    implementation project(':risk-context:risk-domain')
-    implementation project(':risk-context:risk-application')
-    implementation project(':shared-kernel')
-    implementation project(':shared-infrastructure')
+    implementation project(':risk-domain')
+    implementation project(':risk-application')
 
-    implementation libs.spring.boot.starter.data.jpa
-    implementation libs.spring.boot.starter.web
-    implementation libs.spring.boot.starter.validation
-    implementation libs.springdoc.openapi.starter.webmvc.ui
-    runtimeOnly libs.h2.database
-    runtimeOnly libs.postgresql.driver
+    // Persistence: own schema sc_rsk_decisioning, Flyway migrations in src/main/resources/db/migration
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.postgresql:postgresql'
+    implementation 'org.flywaydb:flyway-core'
+    implementation 'org.flywaydb:flyway-database-postgresql'
 
-    testImplementation libs.spring.boot.starter.test
-    testImplementation libs.assertj.core
-    testImplementation libs.mockito.core
-    testImplementation libs.flyway.core
-    testImplementation libs.flyway.database.postgresql
-    testImplementation libs.testcontainers.junit.jupiter
-    testImplementation libs.testcontainers.postgresql
+    // Inbound HTTP and security
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
+
+    // Messaging (transactional outbox relay) and metrics
+    implementation 'org.springframework.kafka:spring-kafka'
+    implementation 'io.micrometer:micrometer-core'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.security:spring-security-test'
 }
 
 jacoco {
     toolVersion = '0.8.14'
 }
 
+// The gate covers every adapter. JPA adapters and Spring wiring are exercised
+// by risk-bootstrap's PostgreSQL integration tests, so their execution data
+// counts here too: ./gradlew check needs TEST_DB_URL (CI) or Docker.
+def riskInfrastructureCoverageIncludes = [
+    'com/bank/risk/infrastructure/config/**',
+    'com/bank/risk/infrastructure/outbox/**',
+    'com/bank/risk/infrastructure/persistence/**',
+    'com/bank/risk/infrastructure/security/**',
+    'com/bank/risk/infrastructure/transaction/**',
+    'com/bank/risk/infrastructure/web/**'
+]
+def bootstrapTestExecution = project(':risk-bootstrap').layout.buildDirectory.file('jacoco/test.exec')
+
 jacocoTestReport {
-    dependsOn test
+    dependsOn test, ':risk-bootstrap:test'
+    executionData.from(bootstrapTestExecution)
     reports {
         xml.required = true
         html.required = true
         csv.required = false
     }
+    afterEvaluate {
+        classDirectories.setFrom(files(classDirectories.files.collect { dir ->
+            fileTree(dir: dir, include: riskInfrastructureCoverageIncludes)
+        }))
+    }
 }
 
 jacocoTestCoverageVerification {
     dependsOn jacocoTestReport
+    executionData.from(bootstrapTestExecution)
+    afterEvaluate {
+        classDirectories.setFrom(files(classDirectories.files.collect { dir ->
+            fileTree(dir: dir, include: riskInfrastructureCoverageIncludes)
+        }))
+    }
     violationRules {
         rule {
             limit {

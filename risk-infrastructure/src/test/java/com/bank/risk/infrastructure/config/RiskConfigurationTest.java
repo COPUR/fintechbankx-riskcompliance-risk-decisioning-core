@@ -1,11 +1,14 @@
 package com.bank.risk.infrastructure.config;
 
-import com.bank.risk.application.RiskAssessmentService;
+import com.bank.risk.domain.port.in.RiskAssessmentUseCase;
 import com.bank.risk.domain.port.out.RiskAssessmentRepository;
+import com.bank.risk.domain.port.out.RiskEventPublisher;
 import com.bank.risk.domain.service.RiskPolicyService;
+import com.bank.risk.infrastructure.transaction.TransactionalRiskAssessmentUseCase;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.PlatformTransactionManager;
 
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 class RiskConfigurationTest {
@@ -14,18 +17,16 @@ class RiskConfigurationTest {
 
     @Test
     void shouldCreateRiskPolicyServiceBean() {
-        RiskPolicyService service = configuration.riskPolicyService();
-
-        assertNotNull(service);
+        assertThat(configuration.riskPolicyService()).isNotNull();
     }
 
     @Test
-    void shouldCreateRiskAssessmentServiceBean() {
+    void theUseCaseBeanIsTheTransactionalBoundaryAroundTheService() {
         RiskPolicyService policyService = configuration.riskPolicyService();
-        RiskAssessmentRepository repository = mock(RiskAssessmentRepository.class);
 
-        RiskAssessmentService service = configuration.riskAssessmentService(policyService, repository);
+        RiskAssessmentUseCase useCase = configuration.riskAssessmentUseCase(policyService,
+            mock(RiskAssessmentRepository.class), mock(RiskEventPublisher.class), mock(PlatformTransactionManager.class));
 
-        assertNotNull(service);
+        assertThat(useCase).isInstanceOf(TransactionalRiskAssessmentUseCase.class);
     }
 }
