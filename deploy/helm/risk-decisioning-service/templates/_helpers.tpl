@@ -245,8 +245,8 @@ every non-alphanumeric character dropped.
 {{- if hasPrefix "SPRINGMAIN" $name -}}
 {{- fail (printf "config.%s must not be set: spring.main.* changes how the application context starts (lazy initialisation, bean definition overriding, sources); it is not an install-time value" $key) -}}
 {{- end -}}
-{{- if regexMatch "^(SPRINGJPA|SPRINGSQLINIT|HIBERNATE|JAKARTAPERSISTENCE|JAVAXPERSISTENCE)" $name -}}
-{{- fail (printf "config.%s must not be set: the schema belongs to the migration Job; Hibernate schema management and SQL init would change it at startup, before the runtime-role check" $key) -}}
+{{- if regexMatch "^(SPRINGJPA|SPRINGSQLINIT|HIBERNATE|JAKARTAPERSISTENCE|JAVAXPERSISTENCE|RISKDATABASEFLYWAY)" $name -}}
+{{- fail (printf "config.%s must not be set: the schema belongs to the migration Job; Hibernate schema management, SQL init and risk.database.flyway would change it at startup, before the runtime-role check" $key) -}}
 {{- end -}}
 {{- end -}}
 {{- $url := trim (toString (default "" (index .Values.config "DB_URL"))) -}}
