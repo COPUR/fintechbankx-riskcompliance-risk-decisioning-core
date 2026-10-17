@@ -2,7 +2,7 @@
 # file<TAB>exact line text<TAB>reason. A hit is dropped only when its file and whole line are listed.
 .github/workflows/required-gates.yml	          POSTGRES_PASSWORD: risk_test	throwaway password of the ephemeral PostgreSQL service container the CI test job starts and discards
 .github/workflows/required-gates.yml	      TEST_DB_PASSWORD: risk_test	throwaway password of the ephemeral PostgreSQL service container the CI test job starts and discards
-.github/workflows/deployability.yml	          reject_render "config.spring.datasource.password $override" --set 'config.spring\.datasource\.password=x'	must-fail chart probe input: the chart has to refuse this key, the value is a dummy
+scripts/ci/chart-render-probes.sh	reject_render "config.spring.datasource.password $override" --set 'config.spring\.datasource\.password=x'	must-fail chart probe input: the chart has to refuse this key, the value is a dummy
 .github/workflows/deployability.yml	          POSTGRES_PASSWORD: backfill	throwaway password of the ephemeral PostgreSQL container the backfill test job starts and discards
 .github/workflows/deployability.yml	      PGPASSWORD: backfill	throwaway password of the ephemeral PostgreSQL container the backfill test job starts and discards
 risk-bootstrap/src/test/java/com/bank/risk/DatabaseMigrationIT.java	    private static final String SCRATCH_PASSWORD = "risk_scratch_runtime_it";	throwaway role a test creates and drops in the ephemeral test database
