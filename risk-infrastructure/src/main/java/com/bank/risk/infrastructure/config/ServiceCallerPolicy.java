@@ -20,8 +20,9 @@ public class ServiceCallerPolicy {
 
     private final Set<String> allowedClients;
 
+    /** A null, blank or comma-only list admits no service: the lists fail closed. */
     public ServiceCallerPolicy(String allowedClients) {
-        this.allowedClients = Arrays.stream(allowedClients.split(","))
+        this.allowedClients = Arrays.stream((allowedClients == null ? "" : allowedClients).split(","))
             .map(String::trim)
             .filter(client -> !client.isEmpty())
             .collect(Collectors.toUnmodifiableSet());

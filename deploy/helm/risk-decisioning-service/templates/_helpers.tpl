@@ -248,6 +248,40 @@ every non-alphanumeric character dropped.
 {{- if regexMatch "^(SPRINGJPA|SPRINGSQLINIT|HIBERNATE|JAKARTAPERSISTENCE|JAVAXPERSISTENCE|RISKDATABASEFLYWAY)" $name -}}
 {{- fail (printf "config.%s must not be set: the schema belongs to the migration Job; Hibernate schema management, SQL init and risk.database.flyway would change it at startup, before the runtime-role check" $key) -}}
 {{- end -}}
+{{- /* The identity client credential (risk.customer.client-credential, bound from CUSTOMER_CLIENT_CREDENTIAL) in any relaxed-binding spelling. */ -}}
+{{- if regexMatch "^(RISK)?CUSTOMERCLIENTCREDENTIAL$" $name -}}
+{{- fail (printf "config.%s must not be set: the customer client credential comes only from the Secret customerClient.secretName (CUSTOMER_CLIENT_CREDENTIAL by secretKeyRef on the app pods), never the ConfigMap" $key) -}}
+{{- end -}}
+{{- end -}}
+{{- /* Screening facts and the customer client (screening-facts plan): values the pods must not start with half-set. */ -}}
+{{- $home := trim (toString (default "" (index .Values.config "RISK_HOME_COUNTRY"))) -}}
+{{- if and $home (not (regexMatch "^[A-Z]{2}$" $home)) -}}
+{{- fail (printf "config.RISK_HOME_COUNTRY must be an upper-case ISO 3166-1 alpha-2 code (the country of the bank's own ACC- accounts), got %q" $home) -}}
+{{- end -}}
+{{- $customer := trim (toString (default "" (index .Values.config "CUSTOMER_SERVICE_URL"))) -}}
+{{- if and $customer (not (regexMatch "^https?://[^/[:space:]]+" $customer)) -}}
+{{- fail (printf "config.CUSTOMER_SERVICE_URL must be an http(s) URL of the customer service, got %q" $customer) -}}
+{{- end -}}
+{{- if or (contains "${" $customer) (contains "$(" $customer) -}}
+{{- fail "config.CUSTOMER_SERVICE_URL must not contain '${' or '$(': it would be resolved after the check" -}}
+{{- end -}}
+{{- $ownClient := trim (toString (default "svc-rsk-decisioning" (index .Values.config "CUSTOMER_CLIENT_ID"))) -}}
+{{- range $caller := splitList "," (toString (default "" (index .Values.config "SERVICE_CALLERS_ELIGIBILITY"))) -}}
+{{- if eq (trim $caller) $ownClient -}}
+{{- fail (printf "config.SERVICE_CALLERS_ELIGIBILITY must not list this service's own client (%s): a token this service obtains for the customer read must never also open its own loan-eligibility endpoint" $ownClient) -}}
+{{- end -}}
+{{- end -}}
+{{- $cc := .Values.customerClient | default dict -}}
+{{- $secret := trim (toString (default "" $cc.secretName)) -}}
+{{- if not $secret -}}
+{{- fail "customerClient.secretName is required: the Secret holding the credential of the realm client config.CUSTOMER_CLIENT_ID, rendered as CUSTOMER_CLIENT_CREDENTIAL by secretKeyRef (the chart ships no Secret; the platform syncs it)" -}}
+{{- end -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$" $secret) -}}
+{{- fail (printf "customerClient.secretName must be a DNS subdomain (lower-case [a-z0-9.-], at most 253 characters), got %q" $secret) -}}
+{{- end -}}
+{{- $ccKey := toString (default "" $cc.credentialKey) -}}
+{{- if not (regexMatch "^[-._a-zA-Z0-9]+$" $ccKey) -}}
+{{- fail (printf "customerClient.credentialKey must be a Secret key ([-._a-zA-Z0-9]+), got %q" $ccKey) -}}
 {{- end -}}
 {{- $url := trim (toString (default "" (index .Values.config "DB_URL"))) -}}
 {{- if and $url (not (hasPrefix "jdbc:postgresql:" $url)) -}}

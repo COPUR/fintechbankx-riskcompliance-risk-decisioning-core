@@ -103,6 +103,29 @@ config:
   # Clients (azp) that may ask for decisions with the SERVICE role. DPoP is not
   # required for internal client-credentials calls (mesh mTLS, platform contract).
   SERVICE_CALLERS: svc-pay-initiation-settlement
+  # Clients (azp) that may ask for loan eligibility with the SERVICE role (POST /api/v1/risk/loan-eligibility).
+  # Required: an empty list admits no service, and the render refuses this service's own client
+  # (config.CUSTOMER_CLIENT_ID) on it.
+  SERVICE_CALLERS_ELIGIBILITY: svc-ln-loan-lifecycle
+  # Screening facts risk computes itself (POST /api/v2/risk/assess, rule set rsk-policy-v4; runbook step 2).
+  # Required: the ISO 3166-1 alpha-2 country of the bank's own accounts (counterpartyAccount "ACC-..."); unset,
+  # every internal counterparty would count as unresolvable, so high risk. Upper case, two letters (AE).
+  RISK_HOME_COUNTRY: ""
+  # The FATF list in sc_rsk_decisioning.high_risk_country is a source only while its oldest loaded_at is
+  # younger than this (ISO 8601 duration); otherwise v2 answers 503 RISK_SOURCE_UNAVAILABLE.
+  RISK_COUNTRY_LIST_MAX_AGE: P35D
+  # Trailing window over the customer's own stored assessments for the velocity score (ISO 8601 duration).
+  RISK_VELOCITY_WINDOW: PT24H
+  # Deprecated POST /api/v1/risk/assess (caller-stated facts): "false" answers 410 API_VERSION_GONE naming v2.
+  # "true" only for the parity window in which an older payments build still sends v1 (runbook step 2).
+  RISK_V1_CALLER_FACTS_ENABLED: "false"
+  # Customer service the loan-eligibility adapter reads GET /api/v1/customers/{id}/credit-standing from
+  # (in-cluster, mesh mTLS). Required; http(s) URL. The realm client it authenticates as is
+  # CUSTOMER_CLIENT_ID; its credential comes only from customerClient below (never a config key: the render
+  # refuses CUSTOMER_CLIENT_CREDENTIAL in config). CUSTOMER_TOKEN_URI is optional and defaults to the
+  # issuer's token endpoint (OIDC_ISSUER_URI/protocol/openid-connect/token); set it only for another endpoint.
+  CUSTOMER_SERVICE_URL: ""
+  CUSTOMER_CLIENT_ID: svc-rsk-decisioning
 
 # Kafka auth profile, rendered as the Deployment's SPRING_PROFILES_ACTIVE (the
 # only profile; the guard refuses spring.profiles.* in config):
@@ -125,6 +148,18 @@ kafkaTls:
 # Owning squad, the squad tag on every metric (platform alert routing).
 metrics:
   squad: risk
+
+# Credential of the realm client config.CUSTOMER_CLIENT_ID, for the client-credentials
+# token the loan-eligibility adapter sends to the customer service. The same route as
+# kafkaTls: an existing Kubernetes Secret in the namespace (synced by the platform's
+# secret tooling; this chart ships no Secret or secret-store resource and the
+# ExternalSecrets above read only the two database paths), rendered on the app pods
+# as CUSTOMER_CLIENT_CREDENTIAL from valueFrom.secretKeyRef, never in the ConfigMap
+# and never on the migration Job. Required: the chart refuses to render without the
+# Secret name, so eligibility cannot silently answer 503 for want of a credential.
+customerClient:
+  secretName: ""
+  credentialKey: client-credential
 
 # Database credential, synced from AWS Secrets Manager by External Secrets Operator.
 externalSecret:

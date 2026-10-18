@@ -54,7 +54,7 @@ Bu repository, FinTechBankX DDD/EDA dönüşümünde **svc-rsk-decisioning** ser
 | API contract | [api/openapi/risk-context.yaml](api/openapi/risk-context.yaml) |
 | Event contract | [api/asyncapi/svc-rsk-decisioning.yaml](api/asyncapi/svc-rsk-decisioning.yaml) (validate: `npx -y @asyncapi/cli@2.13.0 validate api/asyncapi/svc-rsk-decisioning.yaml`). Breaking-change gate in `ci/test` (ADR-019 section 5): `npm ci --prefix scripts/ci/asyncapi && ASYNCAPI_DIR=api/asyncapi node scripts/ci/asyncapi/asyncapi-breaking.mjs` compares with `origin/main`. `asyncapi-breaking.mjs` and `lib/` are copied unchanged from the asyncapi catalog (44837cc). The shared CI template carries the gate in cicd-templates #11 (6bd961a, `publishes-events: true`); this hand-rolled step stays until #11 merges |
 | Container image | `docker build -t risk-decisioning-service .` |
-| Kubernetes | `deploy/helm/risk-decisioning-service` |
+| Kubernetes | `deploy/helm/risk-decisioning-service` (required config: `DB_URL`, `KAFKA_BOOTSTRAP_SERVERS`, `OIDC_*`, `SERVICE_CALLERS_ELIGIBILITY`, `RISK_HOME_COUNTRY`, `CUSTOMER_SERVICE_URL`; `customerClient.secretName` names the Secret rendered as `CUSTOMER_CLIENT_CREDENTIAL`; `scripts/ci/chart-render-probes.sh` has the refusals) |
 | AWS infrastructure | `deploy/terraform` |
 | Data split from the monolith | [RUNBOOK-EXTRACT-rsk-decisioning](docs/migration/RUNBOOK-EXTRACT-rsk-decisioning.md) |
 | Decisions | [ADR 0001: risk facts are caller-attested](docs/architecture/decisions/0001-risk-facts-are-caller-attested.md), [ADR 0002: Flyway runs in a migration Job](docs/architecture/decisions/0002-flyway-runs-in-a-migration-job.md) (both Proposed) |

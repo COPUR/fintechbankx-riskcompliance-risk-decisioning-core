@@ -67,6 +67,14 @@ spec:
             # kafka-strimzi (Strimzi mutual TLS, SSL). The guard refuses every spring.profiles.* config key.
             - name: SPRING_PROFILES_ACTIVE
               value: {{ include "risk.envValue" (list "SPRING_PROFILES_ACTIVE" (include "fbx.kafkaProfile" .)) }}
+            # Credential of the realm client config.CUSTOMER_CLIENT_ID, for the client-credentials token the
+            # loan-eligibility adapter sends to the customer service. From the Secret customerClient.secretName
+            # only (secretKeyRef, no value), never the ConfigMap; the migration Job never gets it.
+            - name: CUSTOMER_CLIENT_CREDENTIAL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.customerClient.secretName | quote }}
+                  key: {{ .Values.customerClient.credentialKey | quote }}
             {{- if eq (toString .Values.kafka.runtime) "strimzi" }}
             # KafkaUser client certificate (PEM) for the kafka-strimzi profile.
             - name: KAFKA_TLS_CERT
