@@ -1,0 +1,129 @@
+package com.bank.risk.infrastructure.config;
+
+import com.bank.risk.infrastructure.outbox.OutboxRelay;
+import com.bank.risk.infrastructure.outbox.RiskEventEnvelopeFactory;
+import com.bank.risk.infrastructure.outbox.SpringDataOutboxRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.scheduling.annotation.EnableScheduling;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.time.Clock;
+import java.time.Duration;
+
+@Configuration
+public class OutboxConfiguration {
+
+    static final String PENDING_GAUGE = "outbox.pending.events";
+    static final String PARKED_GAUGE = "outbox.parked.rows";
+    static final String OLDEST_PENDING_AGE_GAUGE = "outbox.oldest.pending.age.seconds";
+
+    @Bean
+    RiskEventEnvelopeFactory riskEventEnvelopeFactory(ObjectMapper objectMapper) {
+        return new RiskEventEnvelopeFactory(objectMapper);
+    }
+
+    @Bean
+    Clock clock() {
+        return Clock.systemUTC();
+    }
+
+    /**
+     * Backlog of events not yet on Kafka (Prometheus outbox_pending_events).
+     * Alert on growth: the relay or the brokers are down while decisions keep
+     * being made.
+     */
+    @Bean
+    Gauge riskOutboxPendingGauge(MeterRegistry registry, SpringDataOutboxRepository outbox) {
+        return Gauge.builder(PENDING_GAUGE, outbox, SpringDataOutboxRepository::countByPublishedAtIsNullAndParkedAtIsNull)
+            .description("Risk events written to the outbox and waiting for the relay (parked rows excluded)")
+            .tag("service", RiskEventEnvelopeFactory.PRODUCER)
+            .register(registry);
+    }
+
+    /**
+     * Age of the oldest event waiting for the relay (Prometheus
+     * outbox_oldest_pending_age_seconds). The alert for a stalled relay:
+     * non-payload failures (outage, auth) stop the batch and are retried with
+     * backoff, never parked (ADR-021 decision 4), so this age shows them.
+     */
+    @Bean
+    Gauge riskOutboxOldestPendingAgeGauge(MeterRegistry registry, SpringDataOutboxRepository outbox) {
+        return Gauge.builder(OLDEST_PENDING_AGE_GAUGE, outbox, SpringDataOutboxRepository::oldestPendingAgeSeconds)
+            .description("Age in seconds of the oldest risk event waiting for the outbox relay")
+            .baseUnit("seconds")
+            .tag("service", RiskEventEnvelopeFactory.PRODUCER)
+            .register(registry);
+    }
+
+    /**
+     * Rows parked now (Prometheus outbox_parked_rows): a consumer is missing
+     * each of these decisions until the row is replayed (runbook "Parked outbox
+     * events"). The platform alert OutboxEventsParked uses the relay's counter
+     * outbox.parked.events instead.
+     */
+    @Bean
+    Gauge riskOutboxParkedGauge(MeterRegistry registry, SpringDataOutboxRepository outbox) {
+        return Gauge.builder(PARKED_GAUGE, outbox, SpringDataOutboxRepository::countByPublishedAtIsNullAndParkedAtIsNotNull)
+            .description("Risk events parked on a payload error or by an operator; replay by hand")
+            .tag("service", RiskEventEnvelopeFactory.PRODUCER)
+            .register(registry);
+    }
+
+    /**
+     * The relay runs in every replica; the advisory lock lets only one of
+     * them publish at a time. Off unless risk.outbox.relay.enabled=true (the
+     * chart sets it at runbook step 4; local runs set OUTBOX_RELAY_ENABLED=true).
+     */
+    @Configuration
+    @EnableScheduling
+    @ConditionalOnProperty(name = "risk.outbox.relay.enabled", havingValue = "true", matchIfMissing = false)
+    static class RelayConfiguration {
+
+        @Bean
+        OutboxRelay outboxRelay(SpringDataOutboxRepository outbox,
+                                KafkaTemplate<String, String> kafka,
+                                PlatformTransactionManager transactionManager,
+                                Clock clock,
+                                @Value("${risk.outbox.relay.batch-size:100}") int batchSize,
+                                @Value("${risk.outbox.relay.send-timeout:PT35S}") Duration sendTimeout,
+                                @Value("${risk.outbox.retention:P7D}") Duration retention,
+                                @Value("${risk.outbox.relay.interval:PT1S}") Duration backoffBase,
+                                @Value("${risk.outbox.relay.max-backoff:PT5M}") Duration backoffCap,
+                                MeterRegistry registry) {
+            return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), clock, batchSize,
+                sendTimeout, retention, backoffBase, backoffCap, registry);
+        }
+
+        @Bean
+        RelaySchedule relaySchedule(OutboxRelay relay) {
+            return new RelaySchedule(relay);
+        }
+    }
+
+    static class RelaySchedule {
+        private final OutboxRelay relay;
+
+        RelaySchedule(OutboxRelay relay) {
+            this.relay = relay;
+        }
+
+        @Scheduled(fixedDelayString = "${risk.outbox.relay.interval:PT1S}")
+        void relay() {
+            relay.relayOnce();
+        }
+
+        @Scheduled(cron = "${risk.outbox.purge-cron:0 15 3 * * *}")
+        void purge() {
+            relay.purgePublished();
+        }
+    }
+}

@@ -1,0 +1,206 @@
+# Defaults are production-shaped (multi-replica, spread across zones).
+# Override per environment with values-<env>.yaml.
+
+image:
+  repository: ""   # e.g. <account>.dkr.ecr.<region>.amazonaws.com/fintechbankx/risk-decisioning-service
+  tag: ""          # immutable tag (git SHA); never "latest"
+  pullPolicy: IfNotPresent
+
+replicaCount: 3
+
+serviceAccount:
+  name: risk-decisioning-service
+  # IAM role from deploy/terraform output workload_role_arn (IRSA).
+  roleArn: ""
+
+podLabels:
+  app.kubernetes.io/part-of: fintechbankx-risk
+  fintechbankx.io/service-id: svc-rsk-decisioning
+  # The app pods only. The migration Job (templates/migration-job.yaml) writes
+  # sidecar.istio.io/inject: "false" over this label and has no switch of its
+  # own: turning the sidecar on for the Job needs a hook ServiceAccount the mesh
+  # authorises first (runbook, "Database migrations (Flyway Job)").
+  sidecar.istio.io/inject: "true"
+
+service:
+  port: 8080
+  managementPort: 8081
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 768Mi
+  limits:
+    memory: 1Gi
+
+# CPU only: the JVM keeps committed heap, so a memory target would pin the
+# deployment at maxReplicas and block scale-down.
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 12
+  targetCPUUtilizationPercentage: 65
+
+podDisruptionBudget:
+  minAvailable: 2
+
+# Amazon RDS CA bundle for Aurora TLS with certificate and host verification
+# (cicd-templates 4f0f266). The platform's trust-manager Bundle publishes
+# ConfigMap rds-ca-bundle in every service namespace. The volume is not
+# optional: a missing bundle keeps the pod from starting instead of letting it
+# connect without verification. The path is also exported as DB_SSL_ROOT_CERT,
+# which the service's DatabaseTlsGuard (on by default, in the migration Job
+# too) requires and verifies DB_URL against; KafkaTlsGuard is on by default as
+# well, relay on or off. Only the local profile and the test switch turn them
+# off, and the guard refuses both as values. There is no switch to turn the
+# mount off: this service always has a PostgreSQL database. All three values
+# are pinned by the vendored guard (fbx.validateDatabaseCa): configMapName
+# rds-ca-bundle, key global-bundle.pem, mountPath /etc/fintechbankx/rds-ca; any
+# other value, or a null, fails the render (another ConfigMap or key replaces
+# the database trust anchor, another path can put a ConfigMap item where
+# Spring Boot reads config files).
+databaseCa:
+  configMapName: rds-ca-bundle
+  key: global-bundle.pem
+  mountPath: /etc/fintechbankx/rds-ca
+
+# Non-secret runtime settings, rendered into a ConfigMap (keys and values quoted).
+# Every key and value goes through the datasource / TLS guard vendored from
+# cicd-templates 6b6c317 (templates/_fbx_helpers.tpl, called through risk.guard
+# in _helpers.tpl) and this chart's own checks; the render fails otherwise.
+config:
+  # Terraform output jdbc_url: jdbc:postgresql://<aurora-writer-endpoint>:5432/db_rsk_decisioning_<env>
+  #   ?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
+  # Parsed the way PgJDBC reads it: exactly one sslmode=verify-full and one sslrootcert=<databaseCa
+  # mountPath>/<key>, in lower case; no sslfactory, sslfactoryarg, sslhostnameverifier, sslpasswordcallback or
+  # service; no '${' or '$('; plain jdbc:postgresql: (no wrapper driver). Refused config keys, in every spelling
+  # Spring's relaxed binding accepts (case, dash, dot, underscore, index): SPRING_DATASOURCE_*, SPRING_FLYWAY_*,
+  # SPRING_LIQUIBASE_*, SPRING_R2DBC_*, SPRING_APPLICATION_JSON, any JDBC URL or TLS parameter name
+  # (DB_SSL_ROOT_CERT included: the chart sets it from the mounted bundle), DB_URL in another spelling,
+  # SPRING_CONFIG_*, SPRING_PROFILES_* (the chart renders the only profile, from kafka.runtime below),
+  # SPRING_SSL_* and SSL bundles, FINTECHBANKX_TLS_* (separator-free spellings such as FINTECHBANKXTLSENFORCE
+  # too, by this chart's own rule), Kafka client TLS names (SPRING_KAFKA_[<client>_][PROPERTIES_]SSL_*, except the
+  # endpoint identification algorithm, which must be https), SPRING_DATA_MONGODB_*, MONGODB_URI, KAFKA_TLS_*
+  # (only from the kafkaTls Secret), JVM options (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS,
+  # _JAVA_OPTIONS, JAVA_OPTS) and LOGGING_LEVEL_*; keys must be ConfigMap keys ([-._a-zA-Z0-9]+). The runbook
+  # ("Deployment prerequisite (Aurora TLS)") has the full list.
+  DB_URL: ""
+  DB_USERNAME: risk_decisioning_app
+  DB_POOL_MAX: "10"
+  KAFKA_BOOTSTRAP_SERVERS: ""     # MSK bootstrap brokers (IAM listener, port 9098)
+  # SASL_SSL with kafka.runtime msk (Amazon MSK IAM through the pod's IRSA role),
+  # SSL with kafka.runtime strimzi; the render fails on any other value.
+  KAFKA_SECURITY_PROTOCOL: SASL_SSL
+  OIDC_ISSUER_URI: ""
+  OIDC_JWK_SET_URI: ""
+  # Outbox relay to the aggregate topic evt.rsk.risk.v1 (ADR-019; the eventType
+  # header names the event). Off until the mesh contract lists msk for
+  # risk-decisioning-service (allow-egress-msk generated for namespace risk) and
+  # the topic exists; until then events stay in sc_rsk_decisioning.outbox_event.
+  # Turn on with --set config.OUTBOX_RELAY_ENABLED=true (runbook step 4).
+  OUTBOX_RELAY_ENABLED: "false"
+  OIDC_AUDIENCE: svc-rsk-decisioning    # tokens must name this service id in aud
+  # Clients (azp) that may ask for decisions with the SERVICE role. DPoP is not
+  # required for internal client-credentials calls (mesh mTLS, platform contract).
+  SERVICE_CALLERS: svc-pay-initiation-settlement
+  # Clients (azp) that may ask for loan eligibility with the SERVICE role (POST /api/v1/risk/loan-eligibility).
+  # Required: an empty list admits no service, and the render refuses this service's own client
+  # (config.CUSTOMER_CLIENT_ID) on it.
+  SERVICE_CALLERS_ELIGIBILITY: svc-ln-loan-lifecycle
+  # Screening facts risk computes itself (POST /api/v2/risk/assess, rule set rsk-policy-v4; runbook step 2).
+  # Required: the ISO 3166-1 alpha-2 country of the bank's own accounts (counterpartyAccount "ACC-..."); unset,
+  # every internal counterparty would count as unresolvable, so high risk. Upper case, two letters (AE).
+  RISK_HOME_COUNTRY: ""
+  # The FATF list in sc_rsk_decisioning.high_risk_country is a source only while its oldest loaded_at is
+  # younger than this (ISO 8601 duration); otherwise v2 answers 503 RISK_SOURCE_UNAVAILABLE.
+  RISK_COUNTRY_LIST_MAX_AGE: P35D
+  # Trailing window over the customer's own stored assessments for the velocity score (ISO 8601 duration).
+  RISK_VELOCITY_WINDOW: PT24H
+  # Deprecated POST /api/v1/risk/assess (caller-stated facts). "true" (the default) keeps v1 answering, so this
+  # release deploys before payments moves to v2 without an outage; set "false" once payments is on v2
+  # (runbook cutover step 2), and v1 answers 410 API_VERSION_GONE naming v2.
+  RISK_V1_CALLER_FACTS_ENABLED: "true"
+  # Customer service the loan-eligibility adapter reads GET /api/v1/customers/{id}/credit-standing from
+  # (in-cluster, mesh mTLS; the mesh allows risk that one route). Required; http(s) URL. The realm client it
+  # authenticates as is CUSTOMER_CLIENT_ID; its credential and the token endpoint come only from the
+  # oidc-client ExternalSecret (externalSecret.oidcClientSecretName below): the render refuses
+  # CUSTOMER_CLIENT_CREDENTIAL and CUSTOMER_TOKEN_URI as config keys.
+  CUSTOMER_SERVICE_URL: ""
+  CUSTOMER_CLIENT_ID: svc-rsk-decisioning
+
+# Kafka auth profile, rendered as the Deployment's SPRING_PROFILES_ACTIVE (the
+# only profile; the guard refuses spring.profiles.* in config):
+#   msk      kafka-msk: Amazon MSK with IAM client auth through the pod's IRSA role
+#            (config.KAFKA_SECURITY_PROTOCOL must be SASL_SSL);
+#   strimzi  kafka-strimzi on non-AWS clusters: Strimzi mutual TLS
+#            (config.KAFKA_SECURITY_PROTOCOL must be SSL, kafkaTls.secretName required).
+kafka:
+  runtime: msk
+
+# KafkaUser client certificate for kafka.runtime strimzi: the Secret holding the
+# PEM files, rendered as KAFKA_TLS_CERT, KAFKA_TLS_KEY and KAFKA_TLS_CA
+# (secretKeyRef) only then, and required then.
+kafkaTls:
+  secretName: ""
+  certKey: user.crt
+  keyKey: user.key
+  caKey: ca.crt
+
+# Owning squad, the squad tag on every metric (platform alert routing).
+metrics:
+  squad: risk
+
+# Database credential, synced from AWS Secrets Manager by External Secrets Operator.
+externalSecret:
+  enabled: true
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: aws-secrets-manager
+  # Secrets Manager secret from deploy/terraform output app_db_secret_name:
+  # <env>/<service account>/db-app, the only path the platform ESO role may read.
+  remoteSecretName: ""
+  # Required. Secrets Manager secret <env>/risk-decisioning-service/db-migration
+  # (Terraform output migration_db_secret_name): the schema owner's
+  # {"username","password"}, read only by the migration Job below. The service
+  # pods never mount it; the chart refuses to render without it.
+  migrationSecretName: ""
+  # Required. The identity client credential has one home (identity repo, docs/identity/CLIENT_SECRET_DELIVERY.md):
+  # Secrets Manager entry <env>/risk-decisioning-service/oidc-client, a JSON object {client_id, client_secret,
+  # issuer_uri, token_uri} that terraform creates, publish-oidc-client-secrets.sh fills and the realm import
+  # reads. This chart syncs it with its own ExternalSecret (risk-decisioning-service-oidc-client, the same
+  # ClusterSecretStore): client_secret -> CUSTOMER_CLIENT_CREDENTIAL, token_uri -> CUSTOMER_TOKEN_URI, read by the
+  # app pods with secretKeyRef (never the migration Job, never the ConfigMap). Rotation: runbook step 2.
+  oidcClientSecretName: ""
+  refreshInterval: 1h
+
+topologySpread:
+  maxSkew: 1
+
+# Flyway migration Job (templates/migration-job.yaml, decision 0002): Helm
+# pre-install and pre-upgrade hook running this image with the argument
+# "migrate" as the schema owner, before any pod of the release starts or is
+# replaced. A failed Job fails the install or upgrade; give helm --timeout more
+# than activeDeadlineSeconds (runbook, "Database migrations (Flyway Job)"). Its
+# pods carry app.kubernetes.io/name=<serviceAccount.name>,
+# app.kubernetes.io/component=db-migration and sidecar.istio.io/inject "false"
+# (no proxy: Aurora egress is a NetworkPolicy on the name label, and an injected
+# proxy would keep the Job from completing).
+migrationJob:
+  # One retry: each migration is transactional in PostgreSQL, so a retry after a
+  # dropped connection starts from the last applied version.
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  # Finished Jobs (and their logs) are removed after a day, or replaced by the
+  # next install or upgrade.
+  ttlSecondsAfterFinished: 86400
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 768Mi
+
+# Mesh-wide STRICT mTLS, default deny, the ALLOW rules per caller principal and
+# the namespace network policies (mesh #11: allow-ingress-from-payments in
+# namespace risk) are owned by fintechbankx-platform-mesh-security-service-mesh;
+# this chart ships no PeerAuthentication, AuthorizationPolicy or NetworkPolicy.
