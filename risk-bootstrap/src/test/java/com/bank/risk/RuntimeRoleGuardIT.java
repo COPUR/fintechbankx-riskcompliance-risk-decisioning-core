@@ -167,6 +167,9 @@ class RuntimeRoleGuardIT {
         "insert, legacy_credit_risk_assessment, it has INSERT on legacy_credit_risk_assessment",
         "truncate, legacy_credit_risk_assessment, it has TRUNCATE on legacy_credit_risk_assessment",
         "'insert (risk_score)', legacy_credit_risk_assessment, it has INSERT on a column of legacy_credit_risk_assessment",
+        "insert, high_risk_country, it has INSERT on high_risk_country",
+        "delete, high_risk_country, it has DELETE on high_risk_country",
+        "'update (list_version)', high_risk_country, it has UPDATE on a column of high_risk_country",
     })
     void refusesAWritePrivilegeOnAReadOnlyTable(String grant, String table, String finding) {
         scratchRoleLikeV11();
@@ -192,7 +195,7 @@ class RuntimeRoleGuardIT {
         owner.execute("grant " + SCRATCH_SCHEMA_OWNER + " to " + PostgresTestDatabase.ownerUser());
         try {
             owner.execute("create schema " + SCRATCH_SCHEMA + " authorization " + SCRATCH_SCHEMA_OWNER);
-            for (String table : new String[] {"risk_assessment", "legacy_credit_risk_assessment", "flyway_schema_history"}) {
+            for (String table : new String[] {"risk_assessment", "legacy_credit_risk_assessment", "flyway_schema_history", "high_risk_country"}) {
                 owner.execute("create table " + SCRATCH_SCHEMA + "." + table + " (id varchar(64) primary key)");
             }
             owner.execute("drop role if exists " + SCRATCH);
@@ -235,6 +238,8 @@ class RuntimeRoleGuardIT {
         owner.execute("grant select on " + SCHEMA + ".legacy_credit_risk_assessment to " + SCRATCH);
         owner.execute("grant select, insert, update, delete on " + SCHEMA + ".outbox_event to " + SCRATCH);
         owner.execute("grant select on " + SCHEMA + ".flyway_schema_history to " + SCRATCH);
+        // V12: the list is read by the service and loaded only by the operator script as the owner.
+        owner.execute("grant select on " + SCHEMA + ".high_risk_country to " + SCRATCH);
     }
 
     private static RuntimeRoleGuard scratchGuard() {

@@ -93,6 +93,9 @@ class RiskEventsAsyncApiContractTest {
         assertThat(this.<List<String>>at(dataSchema, "properties", "attestationSource", "enum"))
             .contains(data.get("attestationSource").asText());
         assertThat(data.get("attestationSource").asText()).isEqualTo("CALLER_ATTESTED");
+        // v2 decisions (facts resolved by risk) publish RISK_RESOLVED: additive on the enum, consumers accept unknown values.
+        assertThat(this.<List<String>>at(dataSchema, "properties", "attestationSource", "enum"))
+            .containsExactlyInAnyOrder("CALLER_ATTESTED", "RISK_RESOLVED");
         assertThat(data.has("attestedBy")).as("the caller's client id stays in the API, not on the event").isFalse();
         assertThat(data.get("assessmentId").asText()).matches(pattern(dataSchema, "assessmentId"))
             .isEqualTo(envelope.get("aggregateId").asText());

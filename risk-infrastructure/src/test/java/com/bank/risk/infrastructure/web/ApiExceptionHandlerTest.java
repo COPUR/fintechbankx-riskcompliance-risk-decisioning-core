@@ -51,4 +51,26 @@ class ApiExceptionHandlerTest {
         assertThat(ApiExceptionHandler.violates(new DataIntegrityViolationException(null), "uq_risk_assessment_transaction"))
             .isFalse();
     }
+
+    /** Fail closed, retryable: no decision of record is made without a fresh high-risk country list. */
+    @Test
+    void anUnavailableRiskSourceIsA503NamingTheSource() {
+        var response = handler.riskSourceUnavailable(new com.bank.risk.domain.RiskSourceUnavailableException(
+            "high-risk country list", "the list is empty"));
+
+        assertThat(response.getStatusCode().value()).isEqualTo(503);
+        assertThat(response.getBody().code()).isEqualTo("RISK_SOURCE_UNAVAILABLE");
+        assertThat(response.getBody().message()).contains("high-risk country list").contains("empty");
+        assertThat(response.getHeaders().getFirst("Retry-After")).isNotBlank();
+    }
+
+    @Test
+    void anUnreachableCustomerServiceIsA503WithoutItsDetails() {
+        var response = handler.customerServiceUnavailable(new com.bank.risk.domain.CustomerServiceUnavailableException(
+            "GET /api/v1/customers/CUST-1/credit answered 502", null));
+
+        assertThat(response.getStatusCode().value()).isEqualTo(503);
+        assertThat(response.getBody().code()).isEqualTo("CUSTOMER_SERVICE_UNAVAILABLE");
+        assertThat(response.getBody().message()).doesNotContain("502");
+    }
 }

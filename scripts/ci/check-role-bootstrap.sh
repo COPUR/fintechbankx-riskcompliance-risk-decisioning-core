@@ -91,9 +91,9 @@ check "the runtime role cannot create objects in the schema" \
   "SELECT has_schema_privilege('$runtime', '$schema', 'USAGE') || ',' || has_schema_privilege('$runtime', '$schema', 'CREATE')" "true,false"
 check "the runtime role has exactly the V11 grants, unchanged by the third run" \
   "$grants" "$before"
-check "V11 grants: decisions insert-only, legacy read-only, outbox worked, history read" \
+check "V11 and V12 grants: decisions insert-only, legacy and country list read-only, outbox worked, history read" \
   "$grants" \
-  "flyway_schema_history:SELECT,legacy_credit_risk_assessment:SELECT,outbox_event:DELETE,outbox_event:INSERT,outbox_event:SELECT,outbox_event:UPDATE,risk_assessment:INSERT,risk_assessment:SELECT"
+  "flyway_schema_history:SELECT,high_risk_country:SELECT,legacy_credit_risk_assessment:SELECT,outbox_event:DELETE,outbox_event:INSERT,outbox_event:SELECT,outbox_event:UPDATE,risk_assessment:INSERT,risk_assessment:SELECT"
 
 echo "--- roles.sql refuses what it cannot make safe"
 if out="$(psql_q -d "$db" -v owner_role="$owner" -v runtime_role="$owner" -f "$roles_sql" 2>&1)"; then

@@ -38,10 +38,37 @@ class RiskControllerTest {
     @BeforeEach
     void setUp() {
         service = mock(RiskAssessmentUseCase.class);
-        mockMvc = MockMvcBuilders.standaloneSetup(new RiskController(service))
+        mockMvc = mockMvc(true);
+    }
+
+    /** v1 is deprecated (screening-facts plan): it answers only while RISK_V1_CALLER_FACTS_ENABLED is true. */
+    private MockMvc mockMvc(boolean v1CallerFactsEnabled) {
+        return MockMvcBuilders.standaloneSetup(new RiskController(service, v1CallerFactsEnabled))
                 .setControllerAdvice(new ApiExceptionHandler())
                 .defaultRequest(get("/").principal(serviceToken()))
                 .build();
+    }
+
+    /** The default (flag off): v1 assess is gone and the body names v2; reads of stored decisions stay. */
+    @Test
+    void withTheFlagOffV1AssessIsGoneAndNamesV2() throws Exception {
+        MockMvc retired = mockMvc(false);
+
+        retired.perform(post("/api/v1/risk/assess")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {"transactionId":"TX-1","amount":200,"currency":"AED","highRiskCountry":false,"velocityScore":45,"paymentType":"TRANSFER"}
+                        """))
+                .andExpect(status().isGone())
+                .andExpect(jsonPath("$.code").value("API_VERSION_GONE"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("/api/v2/risk/assess")))
+                .andExpect(jsonPath("$.interactionId").exists());
+        org.mockito.Mockito.verifyNoInteractions(service);
+
+        when(service.findByTransactionId("TX-2")).thenReturn(Optional.of(RiskAssessment.create(new RiskEvaluationCommand("TX-2",
+                new BigDecimal("100"), "AED", false, 0, "svc-pay-initiation-settlement", PaymentType.TRANSFER), 10, RiskDecision.ALLOW,
+                List.of(), "rsk-policy-v3")));
+        retired.perform(get("/api/v1/risk/assessments/TX-2")).andExpect(status().isOk());
     }
 
     private static JwtAuthenticationToken serviceToken() {

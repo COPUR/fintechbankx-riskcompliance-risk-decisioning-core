@@ -54,9 +54,9 @@ class RiskPolicyServiceTest {
 
     @Test
     void everyDecisionRecordsTheRuleSetThatMadeIt() {
-        assertThat(RiskPolicyService.RULE_SET_VERSION).isEqualTo("rsk-policy-v3");
-        assertThat(service.evaluate(command("100", "USD", false, 0)).getRuleSetVersion()).isEqualTo("rsk-policy-v3");
-        assertThat(service.evaluate(command("100", "JPY", true, 80)).getRuleSetVersion()).isEqualTo("rsk-policy-v3");
+        assertThat(RiskPolicyService.RULE_SET_VERSION).isEqualTo("rsk-policy-v4");
+        assertThat(service.evaluate(command("100", "USD", false, 0)).getRuleSetVersion()).isEqualTo("rsk-policy-v4");
+        assertThat(service.evaluate(command("100", "JPY", true, 80)).getRuleSetVersion()).isEqualTo("rsk-policy-v4");
     }
 
     @Test

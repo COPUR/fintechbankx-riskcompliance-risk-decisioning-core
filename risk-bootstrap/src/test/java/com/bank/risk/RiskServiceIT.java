@@ -33,7 +33,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * it, and a payment service assesses transactions over HTTP as the runtime role.
  */
 // The test database has no TLS: fintechbankx.tls.enforce=false is a test-only switch (StartupTlsAssertionsTest).
-@SpringBootTest(properties = {"risk.outbox.relay.enabled=false", "fintechbankx.tls.enforce=false"})
+// v1 assess is deprecated and off by default (screening-facts plan): these v1 tests switch it on. The home country is
+// what RISK_HOME_COUNTRY would be set to in an environment.
+@SpringBootTest(properties = {"risk.outbox.relay.enabled=false", "fintechbankx.tls.enforce=false",
+    "risk.v1.caller-facts-enabled=true", "risk.country.home=AE", "risk.velocity.window=PT24H"})
 @AutoConfigureMockMvc
 class RiskServiceIT {
 
@@ -56,6 +59,123 @@ class RiskServiceIT {
         JdbcTemplate owner = PostgresTestDatabase.owner();
         owner.update("delete from sc_rsk_decisioning.outbox_event");
         owner.update("delete from sc_rsk_decisioning.risk_assessment");
+        owner.update("delete from sc_rsk_decisioning.high_risk_country");
+    }
+
+    /** What scripts/ops/load-high-risk-countries.sh writes: one loaded_at per load, as the owner. */
+    private static void loadHighRiskCountries(String loadedAt, String... codes) {
+        JdbcTemplate owner = PostgresTestDatabase.owner();
+        for (String code : codes) {
+            owner.update("insert into sc_rsk_decisioning.high_risk_country (country_code, list_source, list_version, loaded_at)"
+                + " values (?, 'FATF', '2026-06', " + loadedAt + ")", code);
+        }
+    }
+
+    private static String v2Body(String transactionId, String customerId, String amount, String account) {
+        return """
+            {"transactionId": "%s", "customerId": "%s", "amount": %s, "currency": "USD", "paymentType": "TRANSFER", "counterpartyAccount": "%s"}
+            """.formatted(transactionId, customerId, amount, account);
+    }
+
+    private ResultActions assessV2(String transactionId, String customerId, String amount, String account) throws Exception {
+        return mvc.perform(asService(post("/api/v2/risk/assess")).contentType(MediaType.APPLICATION_JSON)
+            .content(v2Body(transactionId, customerId, amount, account)));
+    }
+
+    /**
+     * v2: the caller sends ids and amounts; risk resolves the counterparty country from the IBAN against its own
+     * list and the velocity from its own decisions of record for the customer, and stores both facts (V13).
+     */
+    @Test
+    void v2ResolvesTheCountryAndVelocityFromRisksOwnSourcesAndStoresThem() throws Exception {
+        loadHighRiskCountries("now()", "IR", "KP");
+
+        assessV2("PAY-V2-IR", "CUST-V2-A", "12000.00", "IR580540105180021273113007")
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.decision").value("BLOCK"))
+            .andExpect(jsonPath("$.reasons").value(org.hamcrest.Matchers.containsInAnyOrder("HIGH_AMOUNT", "HIGH_RISK_COUNTRY")))
+            .andExpect(jsonPath("$.attestationSource").value("RISK_RESOLVED"))
+            .andExpect(jsonPath("$.attestedBy").value("svc-pay-initiation-settlement"))
+            .andExpect(jsonPath("$.customerId").value("CUST-V2-A"))
+            .andExpect(jsonPath("$.counterpartyCountry").value("IR"))
+            .andExpect(jsonPath("$.ruleSetVersion").value("rsk-policy-v4"));
+        assertThat(jdbc.queryForMap("select customer_id, counterparty_country, high_risk_country, velocity_score, attestation_source"
+                + " from sc_rsk_decisioning.risk_assessment where transaction_id = 'PAY-V2-IR'"))
+            .containsEntry("customer_id", "CUST-V2-A")
+            .containsEntry("counterparty_country", "IR")
+            .containsEntry("high_risk_country", true)
+            .containsEntry("velocity_score", 0)
+            .containsEntry("attestation_source", "RISK_RESOLVED");
+
+        // Four decisions for CUST-V2-B in the window, then the fifth: 4 prior assessments map to velocityScore 40.
+        for (int i = 1; i <= 4; i++) {
+            assessV2("PAY-V2-B" + i, "CUST-V2-B", "100.00", "GB82WEST12345698765432")
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.decision").value("ALLOW"))
+                .andExpect(jsonPath("$.counterpartyCountry").value("GB"));
+        }
+        assessV2("PAY-V2-B5", "CUST-V2-B", "100.00", "ACC-000123")
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.reasons").value(org.hamcrest.Matchers.contains("MEDIUM_VELOCITY")))
+            .andExpect(jsonPath("$.counterpartyCountry").value("AE"));
+        assertThat(jdbc.queryForObject("select velocity_score from sc_rsk_decisioning.risk_assessment"
+            + " where transaction_id = 'PAY-V2-B5'", Integer.class)).isEqualTo(40);
+        assertThat(jdbc.queryForObject("select count(*) from sc_rsk_decisioning.outbox_event", Integer.class))
+            .as("one event per decision").isEqualTo(6);
+
+        // A faithful retry (same ids, amount by value, same account) gets the stored decision; another account is refused.
+        String first = assessV2("PAY-V2-B5", "CUST-V2-B", "100.00", "ACC-000123").andExpect(status().isCreated())
+            .andReturn().getResponse().getContentAsString();
+        String retry = assessV2("PAY-V2-B5", "CUST-V2-B", "100.0", "acc-000123").andExpect(status().isCreated())
+            .andReturn().getResponse().getContentAsString();
+        assertThat(retry).isEqualTo(first);
+        assessV2("PAY-V2-B5", "CUST-V2-B", "100.00", "GB82WEST12345698765432")
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("TRANSACTION_ALREADY_ASSESSED"));
+        assertThat(jdbc.queryForObject("select count(*) from sc_rsk_decisioning.risk_assessment", Integer.class)).isEqualTo(6);
+    }
+
+    /** No list, or a list older than RISK_COUNTRY_LIST_MAX_AGE (P35D): 503, and no decision of record. */
+    @Test
+    void v2RefusesToDecideWithoutAFreshHighRiskCountryList() throws Exception {
+        assessV2("PAY-V2-EMPTY", "CUST-V2-C", "100.00", "GB82WEST12345698765432")
+            .andExpect(status().isServiceUnavailable())
+            .andExpect(jsonPath("$.code").value("RISK_SOURCE_UNAVAILABLE"))
+            .andExpect(jsonPath("$.interactionId").value("it-interaction-1"));
+
+        loadHighRiskCountries("now() - interval '36 days'", "IR");
+        assessV2("PAY-V2-STALE", "CUST-V2-C", "100.00", "GB82WEST12345698765432")
+            .andExpect(status().isServiceUnavailable())
+            .andExpect(jsonPath("$.code").value("RISK_SOURCE_UNAVAILABLE"));
+
+        assertThat(jdbc.queryForObject("select count(*) from sc_rsk_decisioning.risk_assessment", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from sc_rsk_decisioning.outbox_event", Integer.class)).isZero();
+    }
+
+    /** An account that is neither an IBAN nor an internal account has no country: high risk, stored without a country. */
+    @Test
+    void v2TreatsAnUnresolvableCounterpartyAsHighRisk() throws Exception {
+        loadHighRiskCountries("now()", "IR");
+
+        assessV2("PAY-V2-UNKNOWN", "CUST-V2-D", "100.00", "wallet:0xabc")
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.reasons").value(org.hamcrest.Matchers.contains("HIGH_RISK_COUNTRY")))
+            .andExpect(jsonPath("$.counterpartyCountry").doesNotExist());
+        assertThat(jdbc.queryForObject("select counterparty_country from sc_rsk_decisioning.risk_assessment"
+            + " where transaction_id = 'PAY-V2-UNKNOWN'", String.class)).isNull();
+    }
+
+    /** V12: the service reads the list; only the operator script, as the owner, loads it. */
+    @Test
+    void theRuntimeRoleReadsButCannotLoadTheHighRiskCountryList() {
+        loadHighRiskCountries("now()", "IR");
+        JdbcTemplate runtime = PostgresTestDatabase.runtime();
+
+        assertThat(runtime.queryForObject("select count(*) from sc_rsk_decisioning.high_risk_country", Integer.class)).isEqualTo(1);
+        assertThatThrownBy(() -> runtime.update("insert into sc_rsk_decisioning.high_risk_country values ('KP', 'x', 'y', now())"))
+            .rootCause().hasMessageContaining("permission denied for table high_risk_country");
+        assertThatThrownBy(() -> runtime.update("delete from sc_rsk_decisioning.high_risk_country"))
+            .rootCause().hasMessageContaining("permission denied for table high_risk_country");
     }
 
     /** V5: a decision of record always names its attestation source and who attested it. */
@@ -86,7 +206,7 @@ class RiskServiceIT {
             order by table_name
             """, String.class);
 
-        assertThat(tables).containsExactly("legacy_credit_risk_assessment", "outbox_event", "risk_assessment");
+        assertThat(tables).containsExactly("high_risk_country", "legacy_credit_risk_assessment", "outbox_event", "risk_assessment");
     }
 
     /**
@@ -120,7 +240,7 @@ class RiskServiceIT {
         // The service validates the schema history at startup, so it may read but never write it.
         assertThat(runtime.queryForObject(
                 "select count(*) from sc_rsk_decisioning.flyway_schema_history where success", Integer.class))
-            .isGreaterThanOrEqualTo(11);
+            .isGreaterThanOrEqualTo(13);
         assertThatThrownBy(() -> runtime.update(
                 "insert into sc_rsk_decisioning.flyway_schema_history (installed_rank, version, description, type,"
                     + " script, checksum, installed_by, execution_time, success)"
@@ -160,7 +280,7 @@ class RiskServiceIT {
             .andExpect(header().string("x-fapi-interaction-id", "it-interaction-1"))
             .andExpect(jsonPath("$.decision").value("BLOCK"))
             .andExpect(jsonPath("$.score").value(100))
-            .andExpect(jsonPath("$.ruleSetVersion").value("rsk-policy-v3"))
+            .andExpect(jsonPath("$.ruleSetVersion").value("rsk-policy-v4"))
             .andReturn().getResponse().getContentAsString();
         String retry = assess("PAY-RISK-1", "60000", true, 80)
             .andExpect(status().isCreated())
@@ -171,7 +291,7 @@ class RiskServiceIT {
         assertThat(jdbc.queryForObject("select reasons::text from sc_rsk_decisioning.risk_assessment", String.class))
             .contains("HIGH_AMOUNT", "VERY_HIGH_AMOUNT", "HIGH_RISK_COUNTRY", "HIGH_VELOCITY");
         assertThat(jdbc.queryForObject("select rule_set_version from sc_rsk_decisioning.risk_assessment", String.class))
-            .isEqualTo("rsk-policy-v3");
+            .isEqualTo("rsk-policy-v4");
         assertThat(jdbc.queryForMap("select attestation_source, attested_by from sc_rsk_decisioning.risk_assessment"))
             .containsEntry("attestation_source", "CALLER_ATTESTED")
             .containsEntry("attested_by", "svc-pay-initiation-settlement");

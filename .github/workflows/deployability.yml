@@ -109,6 +109,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Rehearse monolith-to-service credit risk backfill and reconciliation
         run: scripts/migration/verify-backfill.sh
+      # scripts/ops/load-high-risk-countries.sh on a migrated scratch database: a load replaces the list in one
+      # transaction; an empty file, a code that is not alpha-2 or a conninfo with a password is refused and changes nothing.
+      - name: Rehearse the high-risk country list load
+        run: scripts/migration/verify-high-risk-country-load.sh
       # db/bootstrap/roles.sql twice on a fresh database and once more after the migrations ran as the owner:
       # idempotent, LOGIN roles without passwords, the owner owns the schema, the runtime role has only V11's grants.
       - name: Rehearse the DBA role bootstrap

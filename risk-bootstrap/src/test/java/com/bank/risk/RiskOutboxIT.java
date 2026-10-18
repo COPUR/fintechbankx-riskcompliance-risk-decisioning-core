@@ -74,7 +74,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * The scheduled relay is off; Kafka is mocked.
  */
 // The test database has no TLS: fintechbankx.tls.enforce=false is a test-only switch (StartupTlsAssertionsTest).
-@SpringBootTest(properties = {"risk.outbox.relay.enabled=false", "fintechbankx.tls.enforce=false"})
+// v1 assess is deprecated and off by default (screening-facts plan): this IT drives the outbox through v1 and switches it on.
+@SpringBootTest(properties = {"risk.outbox.relay.enabled=false", "fintechbankx.tls.enforce=false", "risk.v1.caller-facts-enabled=true"})
 @AutoConfigureMockMvc
 class RiskOutboxIT {
 
