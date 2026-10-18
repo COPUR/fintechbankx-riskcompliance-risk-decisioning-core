@@ -63,6 +63,18 @@ public class SecurityConfiguration {
         return http.build();
     }
 
+    /** Clients (azp) that may ask for and read transaction decisions: SERVICE_CALLERS (payments). */
+    @Bean("serviceCallers")
+    ServiceCallerPolicy serviceCallers(@Value("${fintechbankx.security.service-callers}") String clients) {
+        return new ServiceCallerPolicy(clients);
+    }
+
+    /** Clients (azp) that may ask for loan eligibility: SERVICE_CALLERS_ELIGIBILITY (the loan service). */
+    @Bean("eligibilityCallers")
+    ServiceCallerPolicy eligibilityCallers(@Value("${fintechbankx.security.eligibility-callers}") String clients) {
+        return new ServiceCallerPolicy(clients);
+    }
+
     @Bean
     JwtDecoder jwtDecoder(OAuth2ResourceServerProperties properties,
                           @Value("${fintechbankx.security.audience}") String audience) {

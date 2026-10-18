@@ -1,8 +1,11 @@
 package com.bank.risk.domain.service;
 
+import com.bank.risk.domain.CounterpartyCountry;
+import com.bank.risk.domain.PaymentType;
 import com.bank.risk.domain.RiskAssessment;
 import com.bank.risk.domain.RiskDecision;
 import com.bank.risk.domain.port.in.RiskEvaluationCommand;
+import com.bank.risk.domain.port.in.TransactionAssessmentCommand;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -16,10 +19,13 @@ import java.util.Map;
  * are skipped, UNSUPPORTED_CURRENCY is added and the decision is at least
  * REVIEW. The country and velocity rules apply to every currency.
  *
- * Suspicious patterns (rsk-policy-v3) restore the monolith's fraud refusals
- * (payment-context FraudDetectionServiceAdapter.isSuspiciousPattern): a round
- * amount or a large mobile payment is decided BLOCK whatever the score, and only
- * in a currency that has pattern limits (USD today).
+ * Suspicious patterns (since rsk-policy-v3) restore the monolith's fraud
+ * refusals (payment-context FraudDetectionServiceAdapter.isSuspiciousPattern):
+ * a round amount or a large mobile payment is decided BLOCK whatever the
+ * score, and only in a currency that has pattern limits (USD today).
+ *
+ * The same rules score facts the caller stated (v1, {@link #evaluate(RiskEvaluationCommand)})
+ * and facts risk resolved itself (v2, {@link #evaluate(TransactionAssessmentCommand, CounterpartyCountry, boolean, int)}).
  */
 public class RiskPolicyService {
 
@@ -27,13 +33,21 @@ public class RiskPolicyService {
     public static final String SUSPICIOUS_ROUND_AMOUNT = "SUSPICIOUS_ROUND_AMOUNT";
     public static final String SUSPICIOUS_MOBILE_AMOUNT = "SUSPICIOUS_MOBILE_AMOUNT";
 
+    /** velocityScore from which MEDIUM_VELOCITY (+15) applies; {@link VelocityPolicy} maps activity onto this scale. */
+    public static final int MEDIUM_VELOCITY_FROM = 40;
+    /** velocityScore from which HIGH_VELOCITY (+30) applies. */
+    public static final int HIGH_VELOCITY_FROM = 70;
+
     /**
      * Version of these rules, stored with every decision. rsk-policy-v1 compared
      * every amount with 10000/50000 whatever its currency; v2 has per-currency
      * thresholds; v3 keeps v2's rules and adds the monolith's suspicious
-     * patterns. Change it whenever a rule or threshold changes.
+     * patterns; v4 keeps v3's thresholds and patterns and applies them to facts
+     * risk resolves itself on v2 of the API (high-risk country from the
+     * risk-owned list, velocity from the customer's decisions of record,
+     * VelocityPolicy). Change it whenever a rule, threshold or fact source changes.
      */
-    public static final String RULE_SET_VERSION = "rsk-policy-v3";
+    public static final String RULE_SET_VERSION = "rsk-policy-v4";
 
     /** The thresholds the policy has always used, now stated as USD (monolith evidence: home currency USD). */
     public static final Map<String, AmountThresholds> USD_THRESHOLDS = Map.of(
@@ -66,33 +80,51 @@ public class RiskPolicyService {
         this.patterns = Map.copyOf(patternsByCurrency == null ? Map.of() : patternsByCurrency);
     }
 
+    /** v1: the caller stated highRiskCountry and velocityScore (CALLER_ATTESTED). */
     public RiskAssessment evaluate(RiskEvaluationCommand command) {
+        Outcome outcome = score(command.amount(), command.currency(), command.highRiskCountry(), command.velocityScore(),
+                command.paymentType());
+        return RiskAssessment.create(command, outcome.score, outcome.decision, outcome.reasons, RULE_SET_VERSION);
+    }
+
+    /** v2: risk resolved the counterparty country, its risk and the velocity itself (RISK_RESOLVED). */
+    public RiskAssessment evaluate(TransactionAssessmentCommand request, CounterpartyCountry country, boolean highRiskCountry,
+                                   int velocityScore) {
+        Outcome outcome = score(request.amount(), request.currency(), highRiskCountry, velocityScore, request.paymentType());
+        return RiskAssessment.resolve(request, country, highRiskCountry, velocityScore, outcome.score, outcome.decision,
+                outcome.reasons, RULE_SET_VERSION);
+    }
+
+    private record Outcome(int score, RiskDecision decision, List<String> reasons) {
+    }
+
+    private Outcome score(BigDecimal amount, String currency, boolean highRiskCountry, int velocityScore, PaymentType paymentType) {
         int score = 0;
         List<String> reasons = new ArrayList<>();
 
-        AmountThresholds limits = thresholds.get(command.currency());
+        AmountThresholds limits = thresholds.get(currency);
         if (limits == null) {
             reasons.add(UNSUPPORTED_CURRENCY);
         } else {
-            if (command.amount().compareTo(limits.high()) > 0) {
+            if (amount.compareTo(limits.high()) > 0) {
                 score += 30;
                 reasons.add("HIGH_AMOUNT");
             }
-            if (command.amount().compareTo(limits.veryHigh()) > 0) {
+            if (amount.compareTo(limits.veryHigh()) > 0) {
                 score += 20;
                 reasons.add("VERY_HIGH_AMOUNT");
             }
         }
 
-        if (command.highRiskCountry()) {
+        if (highRiskCountry) {
             score += 40;
             reasons.add("HIGH_RISK_COUNTRY");
         }
 
-        if (command.velocityScore() >= 70) {
+        if (velocityScore >= HIGH_VELOCITY_FROM) {
             score += 30;
             reasons.add("HIGH_VELOCITY");
-        } else if (command.velocityScore() >= 40) {
+        } else if (velocityScore >= MEDIUM_VELOCITY_FROM) {
             score += 15;
             reasons.add("MEDIUM_VELOCITY");
         }
@@ -102,13 +134,13 @@ public class RiskPolicyService {
         }
 
         // Patterns only where the amount rules apply, so an unsupported currency stays REVIEW.
-        SuspiciousPatternLimits pattern = limits == null ? null : patterns.get(command.currency());
+        SuspiciousPatternLimits pattern = limits == null ? null : patterns.get(currency);
         boolean suspicious = false;
-        if (pattern != null && pattern.isSuspiciousRoundAmount(command.amount())) {
+        if (pattern != null && pattern.isSuspiciousRoundAmount(amount)) {
             reasons.add(SUSPICIOUS_ROUND_AMOUNT);
             suspicious = true;
         }
-        if (pattern != null && pattern.isSuspiciousMobileAmount(command.paymentType(), command.amount())) {
+        if (pattern != null && pattern.isSuspiciousMobileAmount(paymentType, amount)) {
             reasons.add(SUSPICIOUS_MOBILE_AMOUNT);
             suspicious = true;
         }
@@ -121,7 +153,6 @@ public class RiskPolicyService {
         } else {
             decision = RiskDecision.ALLOW;
         }
-
-        return RiskAssessment.create(command, score, decision, reasons, RULE_SET_VERSION);
+        return new Outcome(score, decision, reasons);
     }
 }

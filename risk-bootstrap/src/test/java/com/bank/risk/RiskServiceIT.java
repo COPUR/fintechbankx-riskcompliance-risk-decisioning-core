@@ -90,9 +90,11 @@ class RiskServiceIT {
     void v2ResolvesTheCountryAndVelocityFromRisksOwnSourcesAndStoresThem() throws Exception {
         loadHighRiskCountries("now()", "IR", "KP");
 
-        assessV2("PAY-V2-IR", "CUST-V2-A", "12000.00", "IR580540105180021273113007")
+        // 12000.50 USD: HIGH_AMOUNT (30) and the resolved HIGH_RISK_COUNTRY (40) give 70, REVIEW; not a round amount.
+        assessV2("PAY-V2-IR", "CUST-V2-A", "12000.50", "IR580540105180021273113007")
             .andExpect(status().isCreated())
-            .andExpect(jsonPath("$.decision").value("BLOCK"))
+            .andExpect(jsonPath("$.decision").value("REVIEW"))
+            .andExpect(jsonPath("$.score").value(70))
             .andExpect(jsonPath("$.reasons").value(org.hamcrest.Matchers.containsInAnyOrder("HIGH_AMOUNT", "HIGH_RISK_COUNTRY")))
             .andExpect(jsonPath("$.attestationSource").value("RISK_RESOLVED"))
             .andExpect(jsonPath("$.attestedBy").value("svc-pay-initiation-settlement"))

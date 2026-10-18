@@ -71,7 +71,7 @@ class LoanEligibilityPolicyTest {
     @Test
     void aMissingCreditScoreIsIneligible() {
         assertThat(policy.decide(profile(null, "10000.00", "0.00"), new BigDecimal("100.00"), "AED"))
-            .isEqualTo(new LoanEligibility(LoanEligibilityDecision.INELIGIBLE, LoanEligibilityPolicy.CREDIT_SCORE_UNAVAILABLE));
+            .isEqualTo(new LoanEligibility(LoanEligibilityDecision.INELIGIBLE, LoanEligibilityPolicy.NO_CREDIT_SCORE));
     }
 
     /** CreditProfile.java:56-61: the amount must not exceed limit minus used; exactly the available credit passes. */

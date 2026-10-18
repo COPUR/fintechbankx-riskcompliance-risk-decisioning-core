@@ -126,6 +126,8 @@ fintechbankx:
     audience: ${OIDC_AUDIENCE:svc-rsk-decisioning}
     # Client ids (token "azp") allowed to ask for decisions with the SERVICE role.
     service-callers: ${SERVICE_CALLERS:svc-pay-initiation-settlement}
+    # Client ids allowed to ask for loan eligibility (POST /api/v1/risk/loan-eligibility): the loan service.
+    eligibility-callers: ${SERVICE_CALLERS_ELIGIBILITY:svc-ln-loan-lifecycle}
 
 risk:
   outbox:
@@ -146,6 +148,34 @@ risk:
       # After a stopped batch the relay waits interval, then doubles the wait per
       # stopped run up to this cap; any run that does not stop resets it.
       max-backoff: ${OUTBOX_RELAY_MAX_BACKOFF:PT5M}
+  # Screening facts computed by their owner (plan 2026-10-18): POST /api/v2/risk/assess resolves
+  # highRiskCountry and velocityScore itself; the caller sends ids and amounts.
+  country:
+    # ISO 3166-1 alpha-2 country of the bank's own accounts (counterpartyAccount "ACC-..."). A cutover
+    # precondition (runbook step 2); unset, internal counterparties count as unknown, so high risk.
+    home: ${RISK_HOME_COUNTRY:}
+    # The high-risk country list (sc_rsk_decisioning.high_risk_country, loaded from the FATF list by
+    # scripts/ops/load-high-risk-countries.sh) is a source only while no older than this; otherwise v2
+    # answers 503 RISK_SOURCE_UNAVAILABLE. FATF publishes three times a year.
+    list-max-age: ${RISK_COUNTRY_LIST_MAX_AGE:P35D}
+  velocity:
+    # Trailing window over the customer's own decisions of record; 10 points per prior assessment,
+    # capped at 100 (VelocityPolicy): 4 prior -> MEDIUM_VELOCITY, 7 prior -> HIGH_VELOCITY.
+    window: ${RISK_VELOCITY_WINDOW:PT24H}
+  v1:
+    # POST /api/v1/risk/assess (caller-stated facts) is deprecated. Off (default): 410 API_VERSION_GONE
+    # naming v2. On only while payments still call v1; "flag off, callers on v2" is a cutover precondition.
+    caller-facts-enabled: ${RISK_V1_CALLER_FACTS_ENABLED:false}
+  customer:
+    # Loan eligibility reads GET /api/v1/customers/{id}/credit-standing from the customer service (mesh mTLS in-cluster)
+    # with a client-credentials token for this service's client. The client credential is bound from
+    # CUSTOMER_CLIENT_CREDENTIAL (a Secret); unset, eligibility answers 503 and the log says so at startup.
+    base-url: ${CUSTOMER_SERVICE_URL:http://localhost:8082}
+    token-uri: ${CUSTOMER_TOKEN_URI:${spring.security.oauth2.resourceserver.jwt.issuer-uri}/protocol/openid-connect/token}
+    client-id: ${CUSTOMER_CLIENT_ID:svc-rsk-decisioning}
+    client-credential: ${CUSTOMER_CLIENT_CREDENTIAL:}
+    connect-timeout: PT2S
+    read-timeout: PT3S
   database:
     # validate: at startup Flyway checks the schema history as the runtime role
     # and the service refuses to start while a migration is pending or an

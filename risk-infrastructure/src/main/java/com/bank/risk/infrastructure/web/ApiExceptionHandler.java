@@ -1,11 +1,15 @@
 package com.bank.risk.infrastructure.web;
 
+import com.bank.risk.domain.CustomerNotFoundException;
+import com.bank.risk.domain.CustomerServiceUnavailableException;
+import com.bank.risk.domain.RiskSourceUnavailableException;
 import com.bank.risk.domain.TransactionAlreadyAssessedException;
 import org.hibernate.exception.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -23,11 +27,40 @@ import java.time.Instant;
 public class ApiExceptionHandler {
 
     static final String UNIQUE_TRANSACTION_CONSTRAINT = "uq_risk_assessment_transaction";
+    static final String RETRY_AFTER_SECONDS = "30";
     private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
 
     @ExceptionHandler(TransactionAlreadyAssessedException.class)
     ResponseEntity<ErrorResponse> alreadyAssessed(TransactionAlreadyAssessedException ex) {
         return error(HttpStatus.CONFLICT, "TRANSACTION_ALREADY_ASSESSED", ex.getMessage());
+    }
+
+    /**
+     * A fact source risk owns cannot answer (the high-risk country list is empty
+     * or stale): no decision of record is made. Retryable once the operator has
+     * reloaded the list; the message says which source and why.
+     */
+    @ExceptionHandler(RiskSourceUnavailableException.class)
+    ResponseEntity<ErrorResponse> riskSourceUnavailable(RiskSourceUnavailableException ex) {
+        log.warn("Risk source unavailable: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header(HttpHeaders.RETRY_AFTER, RETRY_AFTER_SECONDS)
+                .body(error(HttpStatus.SERVICE_UNAVAILABLE, "RISK_SOURCE_UNAVAILABLE", ex.getMessage()).getBody());
+    }
+
+    /** The customer service could not be read; its status and errors stay in the log. */
+    @ExceptionHandler(CustomerServiceUnavailableException.class)
+    ResponseEntity<ErrorResponse> customerServiceUnavailable(CustomerServiceUnavailableException ex) {
+        log.warn("Customer service unavailable: {}", ex.getMessage(), ex.getCause());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header(HttpHeaders.RETRY_AFTER, RETRY_AFTER_SECONDS)
+                .body(error(HttpStatus.SERVICE_UNAVAILABLE, "CUSTOMER_SERVICE_UNAVAILABLE",
+                        "The customer service could not be read; retry").getBody());
+    }
+
+    @ExceptionHandler(CustomerNotFoundException.class)
+    ResponseEntity<ErrorResponse> customerNotFound(CustomerNotFoundException ex) {
+        return error(HttpStatus.NOT_FOUND, "CUSTOMER_NOT_FOUND", ex.getMessage());
     }
 
     /**

@@ -128,10 +128,13 @@ components:
           type: string
           enum:
           - CALLER_ATTESTED
+          - RISK_RESOLVED
           description: 'Optional. Who vouches for the risk facts the decision rests on.
             CALLER_ATTESTED: highRiskCountry and velocityScore were stated by the caller, not verified by
-            risk (ADR 0001). The caller''s id is available from the risk API only. Consumers must accept
-            values they do not know.'
+            risk (ADR 0001, POST /api/v1/risk/assess). RISK_RESOLVED: risk resolved both facts itself, the
+            counterparty country against its own high-risk list and the velocity from its own decisions
+            (POST /api/v2/risk/assess). The caller''s id is available from the risk API only. Consumers must
+            accept values they do not know.'
       required:
       - assessmentId
       - transactionId

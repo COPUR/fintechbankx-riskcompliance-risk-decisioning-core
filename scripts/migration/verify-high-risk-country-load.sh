@@ -73,7 +73,7 @@ check "three rows, blank and comment lines skipped" \
 check "source and version on every row" \
   "SELECT string_agg(DISTINCT list_source || '/' || list_version, ',') FROM $schema.high_risk_country" "FATF/2026-06"
 check "one loaded_at per load, within the last minute" \
-  "SELECT count(DISTINCT loaded_at) || ',' || bool_and(loaded_at > now() - interval '1 minute') FROM $schema.high_risk_country" "1,t"
+  "SELECT count(DISTINCT loaded_at) || ',' || bool_and(loaded_at > now() - interval '1 minute') FROM $schema.high_risk_country" "1,true"
 
 echo "--- second load replaces the first"
 "$loader" "dbname=$db" "$work/two.csv" "FATF" "2026-10"

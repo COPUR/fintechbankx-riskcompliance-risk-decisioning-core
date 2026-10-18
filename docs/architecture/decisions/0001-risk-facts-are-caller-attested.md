@@ -1,6 +1,6 @@
 # 0001. Risk facts are caller-attested until risk resolves them itself
 
-- Status: Proposed
+- Status: Proposed; follow-ups delivered in part on 2026-10-18 (screening-facts plan): `POST /api/v2/risk/assess` resolves both facts in risk (`AttestationSource.RISK_RESOLVED`, the risk-owned `high_risk_country` list, velocity from risk's own decisions, `rsk-policy-v4`), and v1 is deprecated behind `RISK_V1_CALLER_FACTS_ENABLED`. Governance writes the superseding ADR; this record stays the account of v1.
 - Date: 2026-10-08
 - Owner: Risk and Compliance Decisioning Squad
 - Scope: `svc-rsk-decisioning`, `POST /api/v1/risk/assess`

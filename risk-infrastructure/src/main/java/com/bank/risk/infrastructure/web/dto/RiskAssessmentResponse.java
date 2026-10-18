@@ -16,7 +16,11 @@ public record RiskAssessmentResponse(
         String attestationSource,
         // Absent, not null, for decisions stored before the attester was recorded.
         @JsonInclude(JsonInclude.Include.NON_NULL) String attestedBy,
-        String ruleSetVersion
+        String ruleSetVersion,
+        // v2 (RISK_RESOLVED) decisions only: absent on caller-attested ones.
+        @JsonInclude(JsonInclude.Include.NON_NULL) String customerId,
+        // v2, when the counterparty account resolved to a country; absent when unresolved (decided as high risk).
+        @JsonInclude(JsonInclude.Include.NON_NULL) String counterpartyCountry
 ) {
     public static RiskAssessmentResponse from(RiskAssessment assessment) {
         return new RiskAssessmentResponse(
@@ -28,7 +32,9 @@ public record RiskAssessmentResponse(
                 assessment.getAssessedAt(),
                 assessment.getAttestationSource().name(),
                 assessment.getAttestedBy(),
-                assessment.getRuleSetVersion()
+                assessment.getRuleSetVersion(),
+                assessment.getCustomerId(),
+                assessment.getCounterpartyCountry()
         );
     }
 }

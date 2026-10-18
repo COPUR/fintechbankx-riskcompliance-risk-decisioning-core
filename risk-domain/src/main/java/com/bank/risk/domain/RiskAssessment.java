@@ -1,6 +1,7 @@
 package com.bank.risk.domain;
 
 import com.bank.risk.domain.port.in.RiskEvaluationCommand;
+import com.bank.risk.domain.port.in.TransactionAssessmentCommand;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -25,6 +26,8 @@ public final class RiskAssessment {
     private final String attestedBy;
     private final String ruleSetVersion;
     private final PaymentType paymentType;
+    private final String customerId;
+    private final String counterpartyCountry;
     private final List<RiskDomainEvent> domainEvents = new ArrayList<>();
 
     private RiskAssessment(
@@ -41,7 +44,9 @@ public final class RiskAssessment {
             AttestationSource attestationSource,
             String attestedBy,
             String ruleSetVersion,
-            PaymentType paymentType
+            PaymentType paymentType,
+            String customerId,
+            String counterpartyCountry
     ) {
         this.id = Objects.requireNonNull(id, "id is required");
         if (transactionId == null || transactionId.isBlank()) {
@@ -78,6 +83,11 @@ public final class RiskAssessment {
         }
         this.ruleSetVersion = ruleSetVersion;
         this.paymentType = Objects.requireNonNull(paymentType, "paymentType is required");
+        if (attestationSource == AttestationSource.RISK_RESOLVED && (customerId == null || customerId.isBlank())) {
+            throw new IllegalArgumentException("customerId is required on a RISK_RESOLVED decision (velocity is per customer)");
+        }
+        this.customerId = customerId == null || customerId.isBlank() ? null : customerId;
+        this.counterpartyCountry = counterpartyCountry == null ? null : CounterpartyCountry.of(counterpartyCountry).code();
     }
 
     /**
@@ -109,7 +119,49 @@ public final class RiskAssessment {
                 AttestationSource.CALLER_ATTESTED,
                 inputs.attestedBy(),
                 ruleSetVersion,
-                inputs.paymentType()
+                inputs.paymentType(),
+                null,
+                null
+        );
+        assessment.domainEvents.add(assessment.assessedEvent());
+        return assessment;
+    }
+
+    /**
+     * Records a decision whose facts risk resolved itself (v2): the counterparty
+     * country from the account, its risk from the risk-owned list, the velocity
+     * from the customer's decisions of record. attested_by names the caller
+     * that asked; the customer and the country are stored with the decision.
+     */
+    public static RiskAssessment resolve(
+            TransactionAssessmentCommand request,
+            CounterpartyCountry counterpartyCountry,
+            boolean highRiskCountry,
+            int velocityScore,
+            int score,
+            RiskDecision decision,
+            List<String> reasons,
+            String ruleSetVersion
+    ) {
+        Objects.requireNonNull(request, "request is required");
+        Objects.requireNonNull(counterpartyCountry, "counterpartyCountry is required (UNKNOWN when unresolved)");
+        RiskAssessment assessment = new RiskAssessment(
+                RiskAssessmentId.generate(),
+                request.transactionId(),
+                request.amount(),
+                request.currency(),
+                highRiskCountry,
+                velocityScore,
+                score,
+                decision,
+                reasons,
+                Instant.now().truncatedTo(ChronoUnit.MICROS),
+                AttestationSource.RISK_RESOLVED,
+                request.requestedBy(),
+                ruleSetVersion,
+                request.paymentType(),
+                request.customerId(),
+                counterpartyCountry.code()
         );
         assessment.domainEvents.add(assessment.assessedEvent());
         return assessment;
@@ -136,7 +188,9 @@ public final class RiskAssessment {
                 snapshot.attestationSource(),
                 snapshot.attestedBy(),
                 snapshot.ruleSetVersion(),
-                snapshot.paymentType()
+                snapshot.paymentType(),
+                snapshot.customerId(),
+                snapshot.counterpartyCountry()
         );
     }
 
@@ -162,6 +216,32 @@ public final class RiskAssessment {
      */
     public RiskAssessment answerRetry(RiskEvaluationCommand request) {
         if (!matches(request)) {
+            throw new TransactionAlreadyAssessedException(request.transactionId());
+        }
+        return this;
+    }
+
+    /**
+     * True when a repeated v2 request asks the same question: same transaction,
+     * customer, amount (by value), currency and payment type, and a counterparty
+     * account that resolves to the same country (or to none, as before). Risk's
+     * own facts (highRiskCountry, velocityScore) are not compared: velocity
+     * moves with time and the first decision stands. A caller-attested (v1)
+     * decision never answers a v2 retry: it has no customer.
+     */
+    public boolean matches(TransactionAssessmentCommand request, CounterpartyCountry country) {
+        return attestationSource == AttestationSource.RISK_RESOLVED
+                && transactionId.equals(request.transactionId())
+                && Objects.equals(customerId, request.customerId())
+                && currency.equals(request.currency())
+                && amount.compareTo(request.amount()) == 0
+                && paymentType == request.paymentType()
+                && Objects.equals(counterpartyCountry, country.code());
+    }
+
+    /** Answers a repeated v2 request: the stored decision, or {@link TransactionAlreadyAssessedException}. */
+    public RiskAssessment answerRetry(TransactionAssessmentCommand request, CounterpartyCountry country) {
+        if (!matches(request, country)) {
             throw new TransactionAlreadyAssessedException(request.transactionId());
         }
         return this;
@@ -246,6 +326,16 @@ public final class RiskAssessment {
     /** The payment type the caller stated; a fact of the decision, compared on retry. */
     public PaymentType getPaymentType() {
         return paymentType;
+    }
+
+    /** The customer the transaction belongs to (v2); null on caller-attested decisions. */
+    public String getCustomerId() {
+        return customerId;
+    }
+
+    /** ISO alpha-2 country risk resolved from the counterparty account (v2); null when unresolved or caller-attested. */
+    public String getCounterpartyCountry() {
+        return counterpartyCountry;
     }
 
 }

@@ -1,16 +1,200 @@
 openapi: 3.0.3
 info:
   title: Risk Context Service API
-  version: 1.0.0
-  description: Transaction risk assessment APIs.
+  version: 1.1.0
+  description: |-
+    Transaction risk assessment and loan eligibility APIs.
+
+    1.1.0 (screening-facts plan, 2026-10-18): risk computes its own facts.
+    POST /api/v2/risk/assess takes ids and amounts only and resolves the
+    counterparty's country risk and the customer's velocity itself.
+    POST /api/v1/risk/assess (caller-stated facts) is deprecated and answers
+    only while RISK_V1_CALLER_FACTS_ENABLED is true. POST
+    /api/v1/risk/loan-eligibility moves the loan eligibility decision from the
+    customer context to risk.
 servers:
   - url: https://api.sandbox.openfinance.ae
 paths:
+  /api/v2/risk/assess:
+    post:
+      summary: Assess transaction risk from facts risk resolves itself
+      operationId: assessTransactionRisk
+      description: |-
+        Decides once per transactionId. The caller sends ids and amounts only:
+        risk resolves the counterparty's country from counterpartyAccount (an
+        IBAN after its mod-97 check, an internal ACC- account as the bank's
+        home country, anything else unknown and therefore high risk), checks it
+        against the risk-owned high-risk country list (FATF, loaded by an
+        operator), and computes the velocity from its own decisions of record
+        for customerId in a trailing window. Both facts and their sources are
+        stored with the decision (attestationSource RISK_RESOLVED).
+
+        transactionId is unique across all callers of this service, so callers
+        must namespace their ids (for example PAY-<payment id>). A retry that
+        repeats the caller's inputs (customerId, amount by value, currency,
+        paymentType, and a counterpartyAccount resolving to the same country)
+        returns the stored decision; the resolved facts are not compared, since
+        velocity moves with time. The same transactionId with any other input
+        is a 409 TRANSACTION_ALREADY_ASSESSED. A 409 DUPLICATE_REQUEST means a
+        concurrent first request for the same transactionId won; retry to get
+        its decision.
+
+        503 RISK_SOURCE_UNAVAILABLE: the high-risk country list is empty or
+        older than RISK_COUNTRY_LIST_MAX_AGE (default P35D). No decision is
+        made; retry after the operator reloads the list (Retry-After is set).
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/DPoP'
+        - $ref: '#/components/parameters/InteractionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransactionAssessmentRequest'
+      responses:
+        '201':
+          description: Risk assessment created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskAssessmentResponse'
+        '400':
+          description: |-
+            INVALID_REQUEST: a missing or malformed input, or a caller-stated
+            highRiskCountry or velocityScore, which v2 does not accept.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: |-
+            TRANSACTION_ALREADY_ASSESSED: the transactionId was already assessed
+            for other inputs. DUPLICATE_REQUEST: a concurrent request for the
+            same transactionId won; retrying returns its decision.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error (not retryable as a duplicate)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: |-
+            RISK_SOURCE_UNAVAILABLE: the high-risk country list is empty or
+            stale; no decision was made. Retry after Retry-After seconds.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+              description: Seconds after which the caller may retry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/risk/loan-eligibility:
+    post:
+      summary: Decide whether a customer may borrow an amount
+      operationId: checkLoanEligibility
+      description: |-
+        Loan eligibility is risk's decision ("Risk decides"). Risk reads the
+        customer's credit position from the customer service
+        (GET /api/v1/customers/{customerId}/credit-standing) and applies the rule ported
+        from the customer context: a credit score of at least 600, and a
+        requested amount within the available credit (limit minus used, the
+        limit customer derives from income and score). The answer is ELIGIBLE
+        or INELIGIBLE with one reason code. Nothing is stored here: the loan
+        service records the decision with its application. Callers: the loan
+        service (SERVICE role, client on SERVICE_CALLERS_ELIGIBILITY) and bank
+        staff.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/DPoP'
+        - $ref: '#/components/parameters/InteractionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoanEligibilityRequest'
+      responses:
+        '200':
+          description: Eligibility decided
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoanEligibilityResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: CUSTOMER_NOT_FOUND, the customer service knows no customer with this id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: |-
+            CUSTOMER_SERVICE_UNAVAILABLE: the customer service could not be
+            read (unreachable, an error, or no service token). No decision was
+            made; retry after Retry-After seconds.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+              description: Seconds after which the caller may retry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/v1/risk/assess:
     post:
-      summary: Assess transaction risk
+      summary: Assess transaction risk from caller-stated facts (deprecated)
       operationId: assessRisk
+      deprecated: true
       description: |-
+        Deprecated (screening-facts plan, 2026-10-18): the caller states
+        highRiskCountry and velocityScore, which risk now resolves itself on
+        POST /api/v2/risk/assess. This operation answers only while the
+        service runs with RISK_V1_CALLER_FACTS_ENABLED=true (off by default);
+        otherwise it is 410 API_VERSION_GONE with a body naming
+        /api/v2/risk/assess. Callers move to v2 before the flag is turned off
+        (runbook cutover precondition).
+
         Decides once per transactionId. transactionId is unique across all
         callers of this service, so callers must namespace their ids (for
         example PAY-<payment id>). A retry that repeats every input (amount by
@@ -65,6 +249,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '410':
+          description: |-
+            API_VERSION_GONE: RISK_V1_CALLER_FACTS_ENABLED is off (the
+            default). The message names POST /api/v2/risk/assess and its body.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: Unexpected server error (not retryable as a duplicate)
           content:
@@ -75,6 +267,9 @@ paths:
     get:
       summary: Find risk assessment by transaction id
       operationId: findRiskAssessment
+      description: |-
+        The stored decision of record for a transaction, whether it was made
+        from caller-stated (v1) or risk-resolved (v2) facts. Not deprecated.
       security:
         - bearerAuth: []
       parameters:
@@ -147,8 +342,107 @@ components:
       schema:
         type: string
   schemas:
+    TransactionAssessmentRequest:
+      type: object
+      description: |-
+        Ids and amounts only. highRiskCountry and velocityScore are not
+        accepted: a body carrying either is a 400 INVALID_REQUEST naming the
+        field, never silently ignored.
+      additionalProperties: false
+      required: [transactionId, customerId, amount, currency, paymentType, counterpartyAccount]
+      properties:
+        transactionId:
+          type: string
+          description: |-
+            Caller's id of the transaction, unique across all callers (namespace
+            it, for example PAY-<payment id>). At most 128 characters.
+          maxLength: 128
+        customerId:
+          type: string
+          description: |-
+            The customer the transaction belongs to (the customer context's id).
+            Velocity is computed over this customer's decisions of record in the
+            trailing window. At most 64 characters.
+          maxLength: 64
+        amount:
+          type: number
+          format: double
+          description: |-
+            Positive, at most 15 integer digits and 4 decimals. More decimals are
+            refused with a 400, never rounded, so a retry matches exactly.
+          minimum: 0
+          exclusiveMinimum: true
+        currency:
+          type: string
+          description: |-
+            Upper-case ISO 4217 code, for example USD. Every code is accepted;
+            amount thresholds exist for USD only, so other currencies get at
+            least REVIEW with reason UNSUPPORTED_CURRENCY.
+        paymentType:
+          type: string
+          enum: [TRANSFER, WIRE_TRANSFER, ACH, CHECK, CREDIT_CARD, DEBIT_CARD, MOBILE_PAYMENT, LOAN_PAYMENT, BILL_PAYMENT]
+          description: |-
+            Kind of payment, with the monolith's PaymentType values. Required:
+            an omitted, null or unknown value is a 400 INVALID_REQUEST. Stored
+            with the decision and compared on retry. A MOBILE_PAYMENT above
+            5000 USD is BLOCK (SUSPICIOUS_MOBILE_AMOUNT).
+        counterpartyAccount:
+          type: string
+          description: |-
+            The counterparty's account: an IBAN (the country is its prefix,
+            trusted only after the mod-97 check; spaces and case are ignored),
+            an internal account starting with ACC- (the bank's home country,
+            RISK_HOME_COUNTRY), or anything else, which has no country and is
+            decided as high risk. At most 64 characters. Stored with the
+            decision as the country it resolved to, and compared on retry by
+            that country.
+          maxLength: 64
+    LoanEligibilityRequest:
+      type: object
+      required: [customerId, requestedAmount, currency]
+      properties:
+        customerId:
+          type: string
+          maxLength: 64
+        requestedAmount:
+          type: number
+          format: double
+          description: Positive, at most 4 decimals.
+          minimum: 0
+          exclusiveMinimum: true
+        currency:
+          type: string
+          description: |-
+            Upper-case ISO 4217 code of the requested amount. A currency other
+            than the customer's credit currency is INELIGIBLE with
+            CURRENCY_MISMATCH, never compared as raw numbers.
+    LoanEligibilityResponse:
+      type: object
+      required: [customerId, requestedAmount, currency, decision, reason]
+      properties:
+        customerId:
+          type: string
+        requestedAmount:
+          type: number
+          format: double
+        currency:
+          type: string
+        decision:
+          type: string
+          enum: [ELIGIBLE, INELIGIBLE]
+        reason:
+          type: string
+          description: |-
+            One reason code. WITHIN_AVAILABLE_CREDIT (eligible);
+            NO_CREDIT_SCORE (the customer's credit position carries
+            no score; never eligible by default); CREDIT_SCORE_BELOW_MINIMUM
+            (below 600, the minimum ported from the customer context);
+            CURRENCY_MISMATCH; INSUFFICIENT_AVAILABLE_CREDIT (the amount
+            exceeds limit minus used credit). Clients must accept codes they
+            do not know.
     RiskAssessmentRequest:
       type: object
+      description: Body of the deprecated v1 operation; the caller states the risk facts.
       required: [transactionId, amount, currency, highRiskCountry, velocityScore, paymentType]
       properties:
         transactionId:
@@ -191,9 +485,8 @@ components:
           description: |-
             Kind of payment, with the monolith's PaymentType values. Required:
             an omitted, null or unknown value is a 400 INVALID_REQUEST. Stored
-            with the decision and compared on retry. Policy rsk-policy-v3
-            decides a MOBILE_PAYMENT above 5000 USD as BLOCK
-            (SUSPICIOUS_MOBILE_AMOUNT).
+            with the decision and compared on retry. The policy decides a
+            MOBILE_PAYMENT above 5000 USD as BLOCK (SUSPICIOUS_MOBILE_AMOUNT).
     RiskAssessmentResponse:
       type: object
       required: [assessmentId, transactionId, score, decision, reasons, assessedAt]
@@ -227,26 +520,45 @@ components:
           type: string
           description: |-
             Who vouches for the risk facts the decision rests on. CALLER_ATTESTED:
-            highRiskCountry and velocityScore were stated by the caller and not
-            verified by this service. Clients must accept values they do not know.
+            highRiskCountry and velocityScore were stated by the caller (v1) and
+            not verified by this service. RISK_RESOLVED: this service resolved
+            the counterparty country against its own high-risk list and the
+            velocity from its own decisions (v2). Clients must accept values
+            they do not know.
         ruleSetVersion:
           type: string
           description: |-
-            Policy rule set that made the decision, for example rsk-policy-v3
-            (per-currency amount thresholds and the monolith's suspicious
-            patterns). A retry returns the stored
+            Policy rule set that made the decision, for example rsk-policy-v4
+            (per-currency amount thresholds, the monolith's suspicious
+            patterns, and risk-resolved facts on v2). A retry returns the stored
             decision with the version it was made under.
         attestedBy:
           type: string
           description: |-
-            The caller that stated the risk facts: the client id (azp) of a
-            service caller, or the subject of a staff caller.
+            The caller that stated the risk facts (v1) or asked for the decision
+            (v2): the client id (azp) of a service caller, or the subject of a
+            staff caller.
+        customerId:
+          type: string
+          description: The customer the transaction belongs to; present on v2 (RISK_RESOLVED) decisions only.
+        counterpartyCountry:
+          type: string
+          description: |-
+            ISO 3166-1 alpha-2 country resolved from counterpartyAccount;
+            present on v2 decisions whose account resolved to a country. Absent
+            when the account could not be resolved (such a counterparty is
+            decided as high risk) and on v1 decisions.
     ErrorResponse:
       type: object
       required: [code, message, interactionId, timestamp]
       properties:
         code:
           type: string
+          description: |-
+            Stable code: INVALID_REQUEST, TRANSACTION_ALREADY_ASSESSED,
+            DUPLICATE_REQUEST, ASSESSMENT_NOT_FOUND, API_VERSION_GONE,
+            RISK_SOURCE_UNAVAILABLE, CUSTOMER_SERVICE_UNAVAILABLE,
+            CUSTOMER_NOT_FOUND, INTERNAL_ERROR.
         message:
           type: string
         interactionId:

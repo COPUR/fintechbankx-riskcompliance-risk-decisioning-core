@@ -35,6 +35,7 @@ jacoco {
 // counts here too: ./gradlew check needs TEST_DB_URL (CI) or Docker.
 def riskInfrastructureCoverageIncludes = [
     'com/bank/risk/infrastructure/config/**',
+    'com/bank/risk/infrastructure/external/**',
     'com/bank/risk/infrastructure/outbox/**',
     'com/bank/risk/infrastructure/persistence/**',
     'com/bank/risk/infrastructure/security/**',

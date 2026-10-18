@@ -29,7 +29,9 @@ final class RiskAssessmentPersistenceMapper {
                 assessment.getAttestationSource().name(),
                 assessment.getAttestedBy(),
                 assessment.getRuleSetVersion(),
-                assessment.getPaymentType().name());
+                assessment.getPaymentType().name(),
+                assessment.getCustomerId(),
+                assessment.getCounterpartyCountry());
     }
 
     static RiskAssessment toDomain(RiskAssessmentJpaEntity row) {
@@ -47,6 +49,8 @@ final class RiskAssessmentPersistenceMapper {
                 AttestationSource.valueOf(row.getAttestationSource()),
                 row.getAttestedBy(),
                 row.getRuleSetVersion(),
-                PaymentType.valueOf(row.getPaymentType())));
+                PaymentType.valueOf(row.getPaymentType()),
+                row.getCustomerId(),
+                row.getCounterpartyCountry()));
     }
 }

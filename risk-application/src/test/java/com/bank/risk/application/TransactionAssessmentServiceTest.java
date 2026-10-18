@@ -69,7 +69,7 @@ class TransactionAssessmentServiceTest {
     }
 
     private static TransactionAssessmentCommand request(String id, String account) {
-        return new TransactionAssessmentCommand(id, "CUST-1", new BigDecimal("12000.00"), "USD", PaymentType.TRANSFER, account,
+        return new TransactionAssessmentCommand(id, "CUST-1", new BigDecimal("12000.50"), "USD", PaymentType.TRANSFER, account,
                 "svc-pay-initiation-settlement");
     }
 

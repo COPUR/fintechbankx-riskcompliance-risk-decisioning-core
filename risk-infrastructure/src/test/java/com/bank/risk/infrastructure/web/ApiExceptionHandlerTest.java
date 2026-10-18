@@ -67,7 +67,7 @@ class ApiExceptionHandlerTest {
     @Test
     void anUnreachableCustomerServiceIsA503WithoutItsDetails() {
         var response = handler.customerServiceUnavailable(new com.bank.risk.domain.CustomerServiceUnavailableException(
-            "GET /api/v1/customers/CUST-1/credit answered 502", null));
+            "GET /api/v1/customers/CUST-1/credit-standing answered 502", null));
 
         assertThat(response.getStatusCode().value()).isEqualTo(503);
         assertThat(response.getBody().code()).isEqualTo("CUSTOMER_SERVICE_UNAVAILABLE");

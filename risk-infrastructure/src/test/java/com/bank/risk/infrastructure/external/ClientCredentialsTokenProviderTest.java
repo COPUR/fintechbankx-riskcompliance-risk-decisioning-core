@@ -57,7 +57,7 @@ class ClientCredentialsTokenProviderTest {
     void requestsAClientCredentialsTokenAndCachesItUntilItIsAboutToExpire() {
         server.expect(once(), requestTo(TOKEN_URI))
                 .andExpect(method(HttpMethod.POST))
-                .andExpect(content().contentType(MediaType.APPLICATION_FORM_URLENCODED))
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_FORM_URLENCODED))
                 .andExpect(content().formData(form("client_credentials", "svc-rsk-decisioning", "client-credential-value")))
                 .andRespond(withSuccess("{\"access_token\":\"t-1\",\"token_type\":\"Bearer\",\"expires_in\":300}", MediaType.APPLICATION_JSON));
 
@@ -65,6 +65,7 @@ class ClientCredentialsTokenProviderTest {
         now.set(NOW.plus(Duration.ofSeconds(200)));
         assertThat(provider.token()).as("served from the cache").isEqualTo("t-1");
         server.verify();
+        server.reset();
 
         server.expect(once(), requestTo(TOKEN_URI))
                 .andRespond(withSuccess("{\"access_token\":\"t-2\",\"token_type\":\"Bearer\",\"expires_in\":300}", MediaType.APPLICATION_JSON));
@@ -83,14 +84,29 @@ class ClientCredentialsTokenProviderTest {
             .hasMessageNotContaining("client-credential-value");
     }
 
+    /**
+     * Without CUSTOMER_CLIENT_CREDENTIAL the service still starts (the assess endpoints do not need the identity
+     * client), warns, and loan eligibility answers 503 until the credential is set; no token request is made.
+     */
     @Test
-    void aMissingClientCredentialIsRefusedAtConstruction() {
-        assertThatThrownBy(() -> new ClientCredentialsTokenProvider(RestClient.create(), TOKEN_URI, "svc-rsk-decisioning", " ", Clock.systemUTC()))
-            .isInstanceOf(IllegalStateException.class)
+    void aMissingClientCredentialMakesEveryTokenRequestUnavailableWithoutCallingTheIdentityProvider() {
+        var withoutCredential = new ClientCredentialsTokenProvider(RestClient.create(), TOKEN_URI, "svc-rsk-decisioning", " ", Clock.systemUTC());
+
+        assertThatThrownBy(withoutCredential::token)
+            .isInstanceOf(CustomerServiceUnavailableException.class)
             .hasMessageContaining("CUSTOMER_CLIENT_CREDENTIAL");
+        server.verify();
+    }
+
+    /** The endpoint and the client id are configuration, known at build time: a blank one is a startup fault. */
+    @Test
+    void aBlankTokenUriOrClientIdIsRefusedAtConstruction() {
         assertThatThrownBy(() -> new ClientCredentialsTokenProvider(RestClient.create(), " ", "svc-rsk-decisioning", "x", Clock.systemUTC()))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("token-uri");
+        assertThatThrownBy(() -> new ClientCredentialsTokenProvider(RestClient.create(), TOKEN_URI, " ", "x", Clock.systemUTC()))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("client-id");
     }
 
     private static org.springframework.util.MultiValueMap<String, String> form(String grant, String clientId, String credential) {

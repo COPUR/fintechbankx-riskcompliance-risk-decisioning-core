@@ -32,8 +32,9 @@ import java.util.Map;
  * decision);</li>
  * <li>on the tables V11 lets it only read ({@link #READ_ONLY_TABLES}:
  * {@code legacy_credit_risk_assessment}, written by the backfill role only,
- * and {@code flyway_schema_history}, so it cannot record, repair or remove a
- * migration) no INSERT, UPDATE, DELETE, TRUNCATE or TRIGGER, and no INSERT,
+ * {@code flyway_schema_history}, so it cannot record, repair or remove a
+ * migration, and {@code high_risk_country}, loaded only by the operator script
+ * as the owner) no INSERT, UPDATE, DELETE, TRUNCATE or TRIGGER, and no INSERT,
  * UPDATE or REFERENCES on a column.</li>
  * </ul>
  * {@code outbox_event} is not checked: V11 grants the runtime role SELECT,
@@ -54,8 +55,8 @@ public final class RuntimeRoleGuard implements SmartInitializingSingleton {
     static final String RUNTIME_USERNAME = MigrationRoleGuard.RUNTIME_USERNAME;
     /** The decisions of record: V11 grants SELECT and INSERT, nothing else. */
     static final String DECISIONS_TABLE = "risk_assessment";
-    /** V11 grants SELECT only: the backfill role writes the first, the migration Job the second. */
-    static final List<String> READ_ONLY_TABLES = List.of("legacy_credit_risk_assessment", "flyway_schema_history");
+    /** V11 and V12 grant SELECT only: the backfill role writes the first, the migration Job the second, the operator load the third. */
+    static final List<String> READ_ONLY_TABLES = List.of("legacy_credit_risk_assessment", "flyway_schema_history", "high_risk_country");
     /** Worked by the relay (SELECT, INSERT, UPDATE, DELETE by V11): deliberately not checked. */
     static final String OUTBOX_TABLE = "outbox_event";
 
@@ -79,7 +80,7 @@ public final class RuntimeRoleGuard implements SmartInitializingSingleton {
                    has_any_column_privilege(current_user, c.oid, 'REFERENCES') as references_on_table_or_column
               from pg_class c
               join pg_namespace n on n.oid = c.relnamespace
-             where n.nspname = ? and c.relname in (?, ?, ?) and c.relkind in ('r', 'p')
+             where n.nspname = ? and c.relname in (?, ?, ?, ?) and c.relkind in ('r', 'p')
             """;
 
     private final JdbcTemplate jdbc;
@@ -98,7 +99,7 @@ public final class RuntimeRoleGuard implements SmartInitializingSingleton {
     void verify() {
         Map<String, Map<String, Object>> rows = new LinkedHashMap<>();
         for (Map<String, Object> row : jdbc.queryForList(SQL, schema, DECISIONS_TABLE,
-                READ_ONLY_TABLES.get(0), READ_ONLY_TABLES.get(1))) {
+                READ_ONLY_TABLES.get(0), READ_ONLY_TABLES.get(1), READ_ONLY_TABLES.get(2))) {
             rows.put((String) row.get("table_name"), row);
         }
         List<String> checked = new ArrayList<>(List.of(DECISIONS_TABLE));

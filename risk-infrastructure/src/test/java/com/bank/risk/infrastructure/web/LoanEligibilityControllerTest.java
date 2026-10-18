@@ -73,7 +73,7 @@ class LoanEligibilityControllerTest {
 
     @Test
     void anUnreachableCustomerServiceIsA503() throws Exception {
-        when(useCase.check(any())).thenThrow(new CustomerServiceUnavailableException("GET /api/v1/customers/CUST-UNIT-006/credit failed", null));
+        when(useCase.check(any())).thenThrow(new CustomerServiceUnavailableException("GET /api/v1/customers/CUST-UNIT-006/credit-standing failed", null));
 
         mockMvc.perform(post("/api/v1/risk/loan-eligibility").contentType(MediaType.APPLICATION_JSON).content(BODY))
                 .andExpect(status().isServiceUnavailable())

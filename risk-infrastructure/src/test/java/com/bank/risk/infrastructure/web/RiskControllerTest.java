@@ -45,6 +45,7 @@ class RiskControllerTest {
     private MockMvc mockMvc(boolean v1CallerFactsEnabled) {
         return MockMvcBuilders.standaloneSetup(new RiskController(service, v1CallerFactsEnabled))
                 .setControllerAdvice(new ApiExceptionHandler())
+                .addFilters(new CorrelationIdFilter())
                 .defaultRequest(get("/").principal(serviceToken()))
                 .build();
     }

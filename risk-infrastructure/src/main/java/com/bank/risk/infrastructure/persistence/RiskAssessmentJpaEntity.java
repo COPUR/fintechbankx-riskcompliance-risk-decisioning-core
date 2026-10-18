@@ -63,6 +63,14 @@ public class RiskAssessmentJpaEntity {
     @Column(name = "payment_type", nullable = false, length = 32, updatable = false)
     private String paymentType;
 
+    /** V13: the customer of a risk-resolved (v2) decision; null on caller-attested rows. */
+    @Column(name = "customer_id", length = 64, updatable = false)
+    private String customerId;
+
+    /** V13: ISO alpha-2 country resolved from the counterparty account; null when unresolved or caller-attested. */
+    @Column(name = "counterparty_country", length = 2, updatable = false)
+    private String counterpartyCountry;
+
     protected RiskAssessmentJpaEntity() {
     }
 
@@ -70,7 +78,7 @@ public class RiskAssessmentJpaEntity {
                             boolean highRiskCountry, int velocityScore, int score,
                             String decision, List<String> reasons, Instant assessedAt,
                             String attestationSource, String attestedBy, String ruleSetVersion,
-                            String paymentType) {
+                            String paymentType, String customerId, String counterpartyCountry) {
         this.assessmentId = assessmentId;
         this.transactionId = transactionId;
         this.amount = amount;
@@ -85,6 +93,8 @@ public class RiskAssessmentJpaEntity {
         this.attestedBy = attestedBy;
         this.ruleSetVersion = ruleSetVersion;
         this.paymentType = paymentType;
+        this.customerId = customerId;
+        this.counterpartyCountry = counterpartyCountry;
     }
 
     public String getAssessmentId() { return assessmentId; }
@@ -101,4 +111,6 @@ public class RiskAssessmentJpaEntity {
     public String getAttestedBy() { return attestedBy; }
     public String getRuleSetVersion() { return ruleSetVersion; }
     public String getPaymentType() { return paymentType; }
+    public String getCustomerId() { return customerId; }
+    public String getCounterpartyCountry() { return counterpartyCountry; }
 }

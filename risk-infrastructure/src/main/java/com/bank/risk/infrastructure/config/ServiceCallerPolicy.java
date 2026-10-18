@@ -1,9 +1,7 @@
 package com.bank.risk.infrastructure.config;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
-import org.springframework.stereotype.Component;
 
 import java.util.Arrays;
 import java.util.Set;
@@ -14,14 +12,15 @@ import java.util.stream.Collectors;
  * is held by every client-credentials client in the realm, so on its own it
  * would let any service claim transaction ids here; the token's authorized
  * party (azp, the calling client id) must also be on this list. Used from @PreAuthorize as
- * {@code @serviceCallers.allowed(authentication)}.
+ * {@code @serviceCallers.allowed(authentication)}; a second instance,
+ * {@code @eligibilityCallers}, lists the loan services that may ask for loan
+ * eligibility. Both are beans of {@link SecurityConfiguration}.
  */
-@Component("serviceCallers")
 public class ServiceCallerPolicy {
 
     private final Set<String> allowedClients;
 
-    public ServiceCallerPolicy(@Value("${fintechbankx.security.service-callers}") String allowedClients) {
+    public ServiceCallerPolicy(String allowedClients) {
         this.allowedClients = Arrays.stream(allowedClients.split(","))
             .map(String::trim)
             .filter(client -> !client.isEmpty())
