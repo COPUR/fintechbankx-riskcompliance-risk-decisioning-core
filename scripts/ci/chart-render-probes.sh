@@ -13,6 +13,11 @@ args="$args --set externalSecret.migrationSecretName=ci/risk-decisioning-service
 args="$args --set config.DB_URL=jdbc:postgresql://ci:5432/db?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem"
 args="$args --set config.KAFKA_BOOTSTRAP_SERVERS=ci:9098"
 args="$args --set config.OIDC_ISSUER_URI=https://ci/realms/fintechbankx --set config.OIDC_JWK_SET_URI=https://ci/certs"
+# Owner-computed screening facts and the customer client (screening-facts plan, "Risk"): the bank's own country and
+# the customer service URL are required config; the identity client credential comes only from a Secret the
+# platform syncs (customerClient.secretName / credentialKey, rendered as CUSTOMER_CLIENT_CREDENTIAL with secretKeyRef).
+args="$args --set config.RISK_HOME_COUNTRY=AE --set config.CUSTOMER_SERVICE_URL=http://customer-profile-kyc-service.customer.svc.cluster.local:8080"
+args="$args --set customerClient.secretName=risk-customer-client"
 # Empty required settings must fail the render, not produce pods that cannot start.
 if helm template ci "$chart" --set image.repository=ci/x --set image.tag=x --set externalSecret.remoteSecretName=ci/risk-decisioning-service/db-app > /dev/null 2>&1; then
   echo "chart rendered without required runtime config"; exit 1
@@ -675,4 +680,65 @@ reject_mutation "a PDB selecting by name only" \
 if mutated 'job["spec"]["template"]["spec"]["containers"][0]["env"] = [e for e in job["spec"]["template"]["spec"]["containers"][0]["env"] if e["name"] != "DB_SSL_ROOT_CERT"]' \
     | check_database_ca 2>/dev/null; then
   echo "database CA check accepted a migration Job without DB_SSL_ROOT_CERT" >&2; exit 1
+fi
+
+# Screening facts and the customer client (screening-facts plan, "Risk"). RISK_HOME_COUNTRY (the country internal
+# ACC- accounts resolve to), CUSTOMER_SERVICE_URL and SERVICE_CALLERS_ELIGIBILITY are required: a dropped or empty
+# key fails the render instead of producing pods whose internal counterparties all count as high risk, whose
+# eligibility calls go nowhere, or whose eligibility endpoint is open to no one by accident. The client credential
+# comes only from a Secret (customerClient.secretName / credentialKey, secretKeyRef on the app pods, never the
+# ConfigMap, never the migration Job), and the service's own client is never an eligibility caller.
+for key in RISK_HOME_COUNTRY CUSTOMER_SERVICE_URL SERVICE_CALLERS_ELIGIBILITY; do
+  reject_render "config.$key is required" --set "config.$key="
+done
+reject_render "config.RISK_HOME_COUNTRY must be an upper-case ISO 3166-1 alpha-2 code" --set config.RISK_HOME_COUNTRY=uae
+reject_render "config.RISK_HOME_COUNTRY must be an upper-case ISO 3166-1 alpha-2 code" --set config.RISK_HOME_COUNTRY=ARE
+reject_render "config.CUSTOMER_SERVICE_URL must be an http(s) URL" --set config.CUSTOMER_SERVICE_URL=customer-profile-kyc-service:8080
+reject_render "config.CUSTOMER_SERVICE_URL must not contain '\${' or '\$('" --set-string 'config.CUSTOMER_SERVICE_URL=http://$(CUSTOMER_HOST):8080'
+credential_only_secret="must not be set: the customer client credential comes only from the Secret customerClient.secretName"
+reject_render "config.CUSTOMER_CLIENT_CREDENTIAL $credential_only_secret" --set-string config.CUSTOMER_CLIENT_CREDENTIAL=x
+reject_render "config.Customer_Client_Credential $credential_only_secret" --set-string config.Customer_Client_Credential=x
+reject_render "config.risk.customer.client-credential $credential_only_secret" --set-string 'config.risk\.customer\.client-credential=x'
+reject_render "config.RISK_CUSTOMER_CLIENT_CREDENTIAL $credential_only_secret" --set-string config.RISK_CUSTOMER_CLIENT_CREDENTIAL=x
+reject_render "customerClient.secretName is required" --set customerClient.secretName=
+reject_render "customerClient.secretName must be a DNS subdomain" --set-string customerClient.secretName=Risk_Customer
+reject_render "customerClient.credentialKey must be a Secret key" --set-string 'customerClient.credentialKey=client credential'
+reject_render "config.SERVICE_CALLERS_ELIGIBILITY must not list this service's own client" --set config.SERVICE_CALLERS_ELIGIBILITY=svc-rsk-decisioning
+reject_render "config.SERVICE_CALLERS_ELIGIBILITY must not list this service's own client" \
+  --set 'config.SERVICE_CALLERS_ELIGIBILITY=svc-ln-loan-lifecycle\, svc-rsk-decisioning'
+reject_render "config.SERVICE_CALLERS_ELIGIBILITY must not list this service's own client" \
+  --set config.CUSTOMER_CLIENT_ID=svc-rsk-other --set config.SERVICE_CALLERS_ELIGIBILITY=svc-rsk-other
+check_customer_client() {
+  python3 -c '
+import sys, yaml
+secret, key = sys.argv[1], sys.argv[2]
+docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+cm = [d for d in docs if d["kind"] == "ConfigMap"][0]["data"]
+norm = lambda k: k.upper().replace("_", "").replace(".", "").replace("-", "")
+assert not any(norm(k).endswith("CLIENTCREDENTIAL") for k in cm), cm
+for k in ("RISK_HOME_COUNTRY", "CUSTOMER_SERVICE_URL", "CUSTOMER_CLIENT_ID", "SERVICE_CALLERS_ELIGIBILITY",
+          "RISK_V1_CALLER_FACTS_ENABLED", "RISK_COUNTRY_LIST_MAX_AGE", "RISK_VELOCITY_WINDOW"):
+    assert cm.get(k), (k, cm.get(k))
+assert cm["RISK_V1_CALLER_FACTS_ENABLED"] == "false", cm["RISK_V1_CALLER_FACTS_ENABLED"]
+app = [d for d in docs if d["kind"] == "Deployment"][0]["spec"]["template"]["spec"]["containers"][0]
+env = {e["name"]: e for e in app.get("env", [])}
+cred = env["CUSTOMER_CLIENT_CREDENTIAL"]
+assert set(cred) == {"name", "valueFrom"} and set(cred["valueFrom"]) == {"secretKeyRef"}, cred
+assert cred["valueFrom"]["secretKeyRef"] == {"name": secret, "key": key}, cred
+job = [d for d in docs if d["kind"] == "Job"][0]["spec"]["template"]["spec"]["containers"][0]
+assert not any(e["name"].startswith("CUSTOMER_") for e in job.get("env", [])), job.get("env")
+assert not any(e.get("secretRef", {}).get("name") == secret for e in job.get("envFrom", [])), job.get("envFrom")
+print("customer client credential from Secret", secret, "key", key)
+' "$1" "$2"
+}
+check_customer_client risk-customer-client client-credential <<<"$rendered"
+helm template ci "$chart" -f "$chart/values-dev.yaml" $args | check_customer_client risk-customer-client client-credential
+helm template ci "$chart" $args --set customerClient.credentialKey=credential | check_customer_client risk-customer-client credential
+if mutated 'job["spec"]["template"]["spec"]["containers"][0]["env"].append({"name": "CUSTOMER_CLIENT_CREDENTIAL", "valueFrom": {"secretKeyRef": {"name": "risk-customer-client", "key": "client-credential"}}})' \
+    | check_customer_client risk-customer-client client-credential 2>/dev/null; then
+  echo "customer client check accepted the credential in the migration Job" >&2; exit 1
+fi
+if mutated 'app["spec"]["containers"][0]["env"] = [e for e in app["spec"]["containers"][0]["env"] if e["name"] != "CUSTOMER_CLIENT_CREDENTIAL"] + [{"name": "CUSTOMER_CLIENT_CREDENTIAL", "value": "x"}]' \
+    | check_customer_client risk-customer-client client-credential 2>/dev/null; then
+  echo "customer client check accepted a literal credential value" >&2; exit 1
 fi

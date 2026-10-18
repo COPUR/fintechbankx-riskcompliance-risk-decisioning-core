@@ -70,6 +70,21 @@ class SecurityConfigurationTest {
         assertThat(policy.allowed(null)).isFalse();
     }
 
+    /**
+     * An empty or missing SERVICE_CALLERS_ELIGIBILITY (or SERVICE_CALLERS) admits no service at all: the lists fail
+     * closed, so a dropped chart value cannot open loan eligibility or the decisions to every SERVICE client.
+     */
+    @Test
+    void anEmptyOrMissingAllowListDeniesEveryService() {
+        for (String empty : new String[] {null, "", " ", ",", " , ,"}) {
+            var policy = new ServiceCallerPolicy(empty);
+            assertThat(policy.allowed(SecurityConfiguration.keycloakRealmRoles().convert(jwt(Map.of("azp", "svc-ln-loan-lifecycle")))))
+                .as("allow-list '%s'", empty).isFalse();
+            assertThat(policy.allowed(SecurityConfiguration.keycloakRealmRoles().convert(jwt(Map.of("azp", "svc-rsk-decisioning")))))
+                .as("allow-list '%s'", empty).isFalse();
+        }
+    }
+
     private static Jwt jwt(Map<String, Object> claims) {
         Jwt.Builder builder = Jwt.withTokenValue("token").header("alg", "RS256").subject("user-1")
             .issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(60));

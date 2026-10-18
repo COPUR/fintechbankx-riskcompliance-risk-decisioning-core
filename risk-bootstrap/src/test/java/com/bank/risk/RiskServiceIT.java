@@ -363,6 +363,34 @@ class RiskServiceIT {
         mvc.perform(get("/api/v1/risk/assessments/{id}", "PAY-ANY")).andExpect(status().isUnauthorized());
     }
 
+    /**
+     * Loan eligibility has its own caller list (SERVICE_CALLERS_ELIGIBILITY, default svc-ln-loan-lifecycle): the
+     * service's own client, a service on SERVICE_CALLERS and an unlisted service all get 403. The listed loan
+     * service passes authorisation; without an identity client credential in the test it then gets the
+     * customer-unavailable 503, never a decision.
+     */
+    @Test
+    void loanEligibilityAdmitsOnlyTheListedLoanService() throws Exception {
+        String body = """
+            {"customerId": "CUST-ELIG-1", "requestedAmount": 5000.00, "currency": "AED"}
+            """;
+        for (String azp : List.of("svc-rsk-decisioning", "svc-pay-initiation-settlement", "svc-cus-profile-kyc")) {
+            mvc.perform(post("/api/v1/risk/loan-eligibility")
+                    .with(jwt().jwt(j -> j.subject("service-account-" + azp).claim("azp", azp))
+                        .authorities(new SimpleGrantedAuthority("ROLE_SERVICE")))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(body))
+                .andExpect(status().isForbidden());
+        }
+        mvc.perform(post("/api/v1/risk/loan-eligibility")
+                .with(jwt().jwt(j -> j.subject("service-account-loan").claim("azp", "svc-ln-loan-lifecycle"))
+                    .authorities(new SimpleGrantedAuthority("ROLE_SERVICE")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+            .andExpect(status().isServiceUnavailable())
+            .andExpect(jsonPath("$.code").value("CUSTOMER_SERVICE_UNAVAILABLE"));
+    }
+
     /** A client-credentials client that holds SERVICE but is not on SERVICE_CALLERS. */
     @Test
     void aServiceClientNotOnTheCallerListIsForbidden() throws Exception {
