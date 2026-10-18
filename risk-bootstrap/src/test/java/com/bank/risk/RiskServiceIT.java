@@ -35,8 +35,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 // The test database has no TLS: fintechbankx.tls.enforce=false is a test-only switch (StartupTlsAssertionsTest).
 // v1 assess is deprecated and off by default (screening-facts plan): these v1 tests switch it on. The home country is
 // what RISK_HOME_COUNTRY would be set to in an environment.
+// risk.v1.caller-facts-enabled is left at the application default (true): v1 keeps answering until the
+// operator turns it off after payments moves to v2 (S5); RiskV1RetiredIT covers the "false" side.
 @SpringBootTest(properties = {"risk.outbox.relay.enabled=false", "fintechbankx.tls.enforce=false",
-    "risk.v1.caller-facts-enabled=true", "risk.country.home=AE", "risk.velocity.window=PT24H"})
+    "risk.country.home=AE", "risk.velocity.window=PT24H"})
 @AutoConfigureMockMvc
 class RiskServiceIT {
 
@@ -52,6 +54,10 @@ class RiskServiceIT {
 
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate jdbc;
+    @Autowired com.bank.risk.domain.port.in.TransactionAssessmentUseCase assessments;
+
+    /** The shape payments' AccountId generates: "ACC-" + UUID (payment-domain AccountId.java:26). */
+    private static final String INTERNAL_ACCOUNT = "ACC-9b2f6c1e-4d3a-4f8b-9c7d-2e1f0a9b8c7d";
 
     @BeforeEach
     void cleanTables() {
@@ -116,19 +122,23 @@ class RiskServiceIT {
                 .andExpect(jsonPath("$.decision").value("ALLOW"))
                 .andExpect(jsonPath("$.counterpartyCountry").value("GB"));
         }
-        assessV2("PAY-V2-B5", "CUST-V2-B", "100.00", "ACC-000123")
+        // The fifth names the customer with surrounding blanks: the id is canonical (trimmed, as customer's
+        // CustomerId.of does), so it is the same customer for velocity and is stored trimmed (S-2).
+        assessV2("PAY-V2-B5", " CUST-V2-B ", "100.00", INTERNAL_ACCOUNT)
             .andExpect(status().isCreated())
             .andExpect(jsonPath("$.reasons").value(org.hamcrest.Matchers.contains("MEDIUM_VELOCITY")))
+            .andExpect(jsonPath("$.customerId").value("CUST-V2-B"))
             .andExpect(jsonPath("$.counterpartyCountry").value("AE"));
-        assertThat(jdbc.queryForObject("select velocity_score from sc_rsk_decisioning.risk_assessment"
-            + " where transaction_id = 'PAY-V2-B5'", Integer.class)).isEqualTo(40);
+        assertThat(jdbc.queryForMap("select velocity_score, customer_id from sc_rsk_decisioning.risk_assessment"
+            + " where transaction_id = 'PAY-V2-B5'"))
+            .containsEntry("velocity_score", 40).containsEntry("customer_id", "CUST-V2-B");
         assertThat(jdbc.queryForObject("select count(*) from sc_rsk_decisioning.outbox_event", Integer.class))
             .as("one event per decision").isEqualTo(6);
 
         // A faithful retry (same ids, amount by value, same account) gets the stored decision; another account is refused.
-        String first = assessV2("PAY-V2-B5", "CUST-V2-B", "100.00", "ACC-000123").andExpect(status().isCreated())
+        String first = assessV2("PAY-V2-B5", "CUST-V2-B", "100.00", INTERNAL_ACCOUNT).andExpect(status().isCreated())
             .andReturn().getResponse().getContentAsString();
-        String retry = assessV2("PAY-V2-B5", "CUST-V2-B", "100.0", "acc-000123").andExpect(status().isCreated())
+        String retry = assessV2("PAY-V2-B5", "CUST-V2-B", "100.0", INTERNAL_ACCOUNT).andExpect(status().isCreated())
             .andReturn().getResponse().getContentAsString();
         assertThat(retry).isEqualTo(first);
         assessV2("PAY-V2-B5", "CUST-V2-B", "100.00", "GB82WEST12345698765432")
@@ -154,17 +164,97 @@ class RiskServiceIT {
         assertThat(jdbc.queryForObject("select count(*) from sc_rsk_decisioning.outbox_event", Integer.class)).isZero();
     }
 
-    /** An account that is neither an IBAN nor an internal account has no country: high risk, stored without a country. */
+    /**
+     * An account that is neither an IBAN of a registered country nor an internal account has no country: high
+     * risk, stored without a country. ZZ passes mod-97 and is not a country (B-1); "ACC-" in front of an Iranian
+     * IBAN is not an internal account (S-1).
+     */
     @Test
     void v2TreatsAnUnresolvableCounterpartyAsHighRisk() throws Exception {
         loadHighRiskCountries("now()", "IR");
 
-        assessV2("PAY-V2-UNKNOWN", "CUST-V2-D", "100.00", "wallet:0xabc")
-            .andExpect(status().isCreated())
-            .andExpect(jsonPath("$.reasons").value(org.hamcrest.Matchers.contains("HIGH_RISK_COUNTRY")))
-            .andExpect(jsonPath("$.counterpartyCountry").doesNotExist());
-        assertThat(jdbc.queryForObject("select counterparty_country from sc_rsk_decisioning.risk_assessment"
-            + " where transaction_id = 'PAY-V2-UNKNOWN'", String.class)).isNull();
+        int n = 0;
+        for (String account : List.of("wallet:0xabc", "ZZ1812345678901234", "ACC-IR580540105180021273113007", "ACC-000123")) {
+            String transactionId = "PAY-V2-UNKNOWN-" + (++n);
+            assessV2(transactionId, "CUST-V2-D" + n, "100.00", account)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.reasons").value(org.hamcrest.Matchers.contains("HIGH_RISK_COUNTRY")))
+                .andExpect(jsonPath("$.counterpartyCountry").doesNotExist());
+            assertThat(jdbc.queryForObject("select counterparty_country from sc_rsk_decisioning.risk_assessment"
+                + " where transaction_id = ?", String.class, transactionId)).as(account).isNull();
+        }
+    }
+
+    /**
+     * Velocity cannot be gamed by firing payments at once (S-2): the count and the insert run under a
+     * per-customer transaction-scoped advisory lock, so N parallel assessments of one customer see
+     * 0, 1, ..., N-1 prior decisions, never the same count twice.
+     */
+    @Test
+    void parallelAssessmentsOfOneCustomerSeeIncreasingVelocity() throws Exception {
+        loadHighRiskCountries("now()", "IR");
+        int parallel = 6;
+        var start = new java.util.concurrent.CountDownLatch(1);
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(parallel);
+        try {
+            List<java.util.concurrent.Future<Integer>> scores = new java.util.ArrayList<>();
+            for (int i = 1; i <= parallel; i++) {
+                String transactionId = "PAY-V2-PAR-" + i;
+                scores.add(pool.submit(() -> {
+                    start.await();
+                    return assessments.assess(new com.bank.risk.domain.port.in.TransactionAssessmentCommand(transactionId,
+                        "CUST-V2-PAR", new java.math.BigDecimal("100.00"), "USD", com.bank.risk.domain.PaymentType.TRANSFER,
+                        "GB82WEST12345698765432", "svc-pay-initiation-settlement")).getVelocityScore();
+                }));
+            }
+            start.countDown();
+            List<Integer> seen = new java.util.ArrayList<>();
+            for (var score : scores) {
+                seen.add(score.get(60, java.util.concurrent.TimeUnit.SECONDS));
+            }
+            assertThat(seen).containsExactlyInAnyOrder(0, 10, 20, 30, 40, 50);
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(jdbc.queryForList("select velocity_score from sc_rsk_decisioning.risk_assessment"
+            + " where customer_id = 'CUST-V2-PAR' order by velocity_score", Integer.class))
+            .containsExactly(0, 10, 20, 30, 40, 50);
+    }
+
+    /** No token is 401; a token with the wrong role, or a SERVICE token whose client is not listed, is 403 (S4). */
+    @Test
+    void v2AssessAndLoanEligibilityRefuseMissingWrongAndUnlistedCallers() throws Exception {
+        loadHighRiskCountries("now()", "IR");
+        String eligibility = """
+            {"customerId": "CUST-ELIG-2", "requestedAmount": 5000.00, "currency": "AED"}
+            """;
+        mvc.perform(post("/api/v2/risk/assess").contentType(MediaType.APPLICATION_JSON)
+                .content(v2Body("PAY-V2-ANON", "CUST-ANON", "100.00", "GB82WEST12345698765432")))
+            .andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/v1/risk/loan-eligibility").contentType(MediaType.APPLICATION_JSON).content(eligibility))
+            .andExpect(status().isUnauthorized());
+
+        for (String role : List.of("ROLE_AUDITOR", "ROLE_CUSTOMER")) {
+            mvc.perform(post("/api/v2/risk/assess")
+                    .with(jwt().jwt(j -> j.subject("user-1").claim("azp", "fintechbankx-web")).authorities(new SimpleGrantedAuthority(role)))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(v2Body("PAY-V2-ROLE", "CUST-ROLE", "100.00", "GB82WEST12345698765432")))
+                .andExpect(status().isForbidden());
+        }
+        for (String role : List.of("ROLE_AUDITOR", "ROLE_BANKER", "ROLE_ADMIN")) {
+            mvc.perform(post("/api/v1/risk/loan-eligibility")
+                    .with(jwt().jwt(j -> j.subject("staff-1").claim("azp", "fintechbankx-web")).authorities(new SimpleGrantedAuthority(role)))
+                    .contentType(MediaType.APPLICATION_JSON).content(eligibility))
+                .andExpect(status().isForbidden());
+        }
+        mvc.perform(post("/api/v2/risk/assess")
+                .with(jwt().jwt(j -> j.subject("service-account-customer").claim("azp", "svc-cus-profile-kyc"))
+                    .authorities(new SimpleGrantedAuthority("ROLE_SERVICE")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(v2Body("PAY-V2-UNLISTED", "CUST-UNLISTED", "100.00", "GB82WEST12345698765432")))
+            .andExpect(status().isForbidden());
+        assertThat(jdbc.queryForObject("select count(*) from sc_rsk_decisioning.risk_assessment", Integer.class))
+            .as("nothing was decided for a refused caller").isZero();
     }
 
     /** V12: the service reads the list; only the operator script, as the owner, loads it. */
@@ -382,6 +472,12 @@ class RiskServiceIT {
                     .content(body))
                 .andExpect(status().isForbidden());
         }
+        // Staff roles do not open eligibility either: service callers only (S-4).
+        mvc.perform(post("/api/v1/risk/loan-eligibility")
+                .with(jwt().jwt(j -> j.subject("staff-1").claim("azp", "fintechbankx-web")).authorities(new SimpleGrantedAuthority("ROLE_BANKER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+            .andExpect(status().isForbidden());
         mvc.perform(post("/api/v1/risk/loan-eligibility")
                 .with(jwt().jwt(j -> j.subject("service-account-loan").claim("azp", "svc-ln-loan-lifecycle"))
                     .authorities(new SimpleGrantedAuthority("ROLE_SERVICE")))

@@ -8,8 +8,10 @@
 #   3. loads a two-country list and checks it replaced the first (no stale row
 #      survives a load);
 #   4. proves the refusals leave the table unchanged: an empty file, a file with
-#      a code that is not alpha-2, a conninfo that carries a password (nothing
-#      is connected to), and a missing argument.
+#      a code that is not alpha-2, a conninfo that carries a password in the
+#      key=value form or either URI form (nothing is connected to), a load that
+#      would shrink the list below 90% of its rows without --allow-shrink, and
+#      a missing argument.
 #
 # Needs psql and a role that can create databases, via the usual PG* env vars
 # (PGHOST, PGPORT, PGUSER, PGPASSWORD). Runs in CI (deploy/data-split-rehearsal).
@@ -75,9 +77,23 @@ check "source and version on every row" \
 check "one loaded_at per load, within the last minute" \
   "SELECT count(DISTINCT loaded_at) || ',' || bool_and(loaded_at > now() - interval '1 minute') FROM $schema.high_risk_country" "1,true"
 
-echo "--- second load replaces the first"
-"$loader" "dbname=$db" "$work/two.csv" "FATF" "2026-10"
+echo "--- second load: a shrink below 90% needs --allow-shrink, then replaces the first"
+refuse "a load that shrinks the list to two of three rows" "--allow-shrink" "$loader" "dbname=$db" "$work/two.csv" "FATF" "2026-10"
+"$loader" --allow-shrink "dbname=$db" "$work/two.csv" "FATF" "2026-10"
 check "the dropped country is gone and the version moved" \
+  "SELECT string_agg(country_code || ':' || list_version, ',' ORDER BY country_code) FROM $schema.high_risk_country" "IR:2026-10,KP:2026-10"
+
+echo "--- the 90% boundary: ten to nine is allowed, nine to eight is not"
+printf 'AF\nBF\nCM\nCD\nHT\nIR\nKP\nMM\nML\nMZ\n' > "$work/ten.csv"
+printf 'AF\nBF\nCM\nCD\nHT\nIR\nKP\nMM\nML\n' > "$work/nine.csv"
+printf 'AF\nBF\nCM\nCD\nHT\nIR\nKP\nMM\n' > "$work/eight.csv"
+"$loader" "dbname=$db" "$work/ten.csv" "FATF" "2026-10"
+check "ten rows" "SELECT count(*) FROM $schema.high_risk_country" "10"
+"$loader" "dbname=$db" "$work/nine.csv" "FATF" "2026-10"
+check "nine rows: exactly 90% is not a shrink below 90%" "SELECT count(*) FROM $schema.high_risk_country" "9"
+refuse "nine to eight (88.9%)" "below 90%" "$loader" "dbname=$db" "$work/eight.csv" "FATF" "2026-10"
+"$loader" --allow-shrink "dbname=$db" "$work/two.csv" "FATF" "2026-10"
+check "back to the two-row list" \
   "SELECT string_agg(country_code || ':' || list_version, ',' ORDER BY country_code) FROM $schema.high_risk_country" "IR:2026-10,KP:2026-10"
 
 echo "--- refusals"
@@ -91,6 +107,9 @@ refuse "a blank list version" "list-version" "$loader" "dbname=$db" "$work/two.c
 pw_key="pass"; pw_key="${pw_key}word"
 refuse "a conninfo carrying a credential" "must not carry a password" "$loader" "dbname=$db ${pw_key}=x" "$work/two.csv" "FATF" "2026-11"
 refuse "a URI conninfo carrying a credential" "must not carry a password" "$loader" "postgresql://u:x@localhost/$db" "$work/two.csv" "FATF" "2026-11"
+refuse "a URI conninfo carrying a credential as a query parameter" "must not carry a password" "$loader" "postgresql://localhost/$db?${pw_key}=x" "$work/two.csv" "FATF" "2026-11"
+refuse "a URI conninfo carrying a credential as a second query parameter" "must not carry a password" "$loader" "postgresql://localhost/$db?sslmode=require&${pw_key}=x" "$work/two.csv" "FATF" "2026-11"
+refuse "an unknown option" "usage:" "$loader" --allow-anything "dbname=$db" "$work/two.csv" "FATF" "2026-11"
 if out="$("$loader" "dbname=$db" "$work/two.csv" 2>&1)"; then
   echo "FAIL a run with missing arguments succeeded" >&2; exit 1
 fi

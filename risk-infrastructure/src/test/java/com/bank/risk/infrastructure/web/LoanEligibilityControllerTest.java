@@ -41,7 +41,51 @@ class LoanEligibilityControllerTest {
         useCase = mock(LoanEligibilityUseCase.class);
         mockMvc = MockMvcBuilders.standaloneSetup(new LoanEligibilityController(useCase))
                 .setControllerAdvice(new ApiExceptionHandler())
+                .addFilters(new CorrelationIdFilter())
+                .defaultRequest(post("/").principal(loanServiceToken()))
                 .build();
+    }
+
+    private static org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken loanServiceToken() {
+        var jwt = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("t").header("alg", "RS256")
+            .subject("service-account-svc-ln-loan-lifecycle").claim("azp", "svc-ln-loan-lifecycle").build();
+        return new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(jwt,
+            java.util.List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_SERVICE")));
+    }
+
+    /** Eligibility is for the loan services only (SERVICE_CALLERS_ELIGIBILITY); no staff role opens it (DevSecOps S-4). */
+    @Test
+    void onlyListedServiceCallersAreAdmitted() {
+        assertThat(LoanEligibilityController.CALLERS)
+            .isEqualTo("hasRole('SERVICE') and @eligibilityCallers.allowed(authentication)");
+    }
+
+    /**
+     * Every decision is traceable to who asked about whom: one structured log line with the caller's client
+     * (azp), the customer id, the decision, the reason and the interaction id; never the score or a Micrometer tag
+     * with an id.
+     */
+    @Test
+    void logsTheCallerAndTheCustomerOfEveryDecisionWithoutTheScore() throws Exception {
+        var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(LoanEligibilityController.class);
+        var lines = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        lines.start();
+        logger.addAppender(lines);
+        try {
+            when(useCase.check(any())).thenReturn(new LoanEligibility(LoanEligibilityDecision.INELIGIBLE, "CREDIT_SCORE_BELOW_MINIMUM"));
+
+            mockMvc.perform(post("/api/v1/risk/loan-eligibility").header("x-fapi-interaction-id", "int-77")
+                    .contentType(MediaType.APPLICATION_JSON).content(BODY))
+                .andExpect(status().isOk());
+
+            assertThat(lines.list).hasSize(1);
+            String line = lines.list.get(0).getFormattedMessage();
+            assertThat(line).contains("caller=svc-ln-loan-lifecycle", "customerId=CUST-UNIT-006", "decision=INELIGIBLE",
+                "reason=CREDIT_SCORE_BELOW_MINIMUM", "interactionId=int-77");
+            assertThat(line).doesNotContainIgnoringCase("score=").doesNotContain("5000");
+        } finally {
+            logger.detachAppender(lines);
+        }
     }
 
     @Test

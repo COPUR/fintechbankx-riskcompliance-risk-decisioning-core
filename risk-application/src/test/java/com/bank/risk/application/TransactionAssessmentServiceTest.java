@@ -125,7 +125,7 @@ class TransactionAssessmentServiceTest {
         when(history.countAssessments(anyString(), any())).thenReturn(0);
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        RiskAssessment internal = service.assess(request("PAY-3", "ACC-0001"));
+        RiskAssessment internal = service.assess(request("PAY-3", "ACC-9b2f6c1e-4d3a-4f8b-9c7d-2e1f0a9b8c7d"));
         RiskAssessment unresolvable = service.assess(request("PAY-4", "wallet:xyz"));
 
         assertThat(internal.getCounterpartyCountry()).isEqualTo("AE");

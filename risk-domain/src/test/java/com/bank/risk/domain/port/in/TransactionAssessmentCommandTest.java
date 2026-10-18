@@ -28,6 +28,16 @@ class TransactionAssessmentCommandTest {
         assertThat(command.counterpartyAccount()).isEqualTo("GB82WEST12345698765432");
     }
 
+    /** customerId is canonical as the customer context keeps it (CustomerId.of trims), so " CUST-1 " and "CUST-1" are one customer for velocity. */
+    @Test
+    void theCustomerIdIsTrimmed() {
+        TransactionAssessmentCommand command = command("PAY-1", "  CUST-1 ", "100.00", "USD", PaymentType.TRANSFER,
+                "GB82WEST12345698765432", "svc-pay-initiation-settlement");
+
+        assertThat(command.customerId()).isEqualTo("CUST-1");
+        assertThat(new LoanEligibilityCommand(" CUST-1\t", new java.math.BigDecimal("10.00"), "AED").customerId()).isEqualTo("CUST-1");
+    }
+
     @ParameterizedTest(name = "{0}")
     @CsvSource(delimiter = '|', value = {
         "blank transactionId     | ' '    | CUST-1 | 100.00  | USD | TRANSFER | ACC-1 | svc | transactionId",

@@ -77,6 +77,8 @@ class RiskContextOpenApiContractTest {
         Map<String, Object> spec = spec();
         Map<String, Object> v1 = (Map<String, Object>) path(spec, "paths", "/api/v1/risk/assess", "post");
         assertThat(v1).containsEntry("deprecated", true);
+        assertThat((String) v1.get("description")).as("on by default so a deploy before payments moves to v2 breaks nothing (S5)")
+            .contains("true by default").doesNotContain("off by default");
         assertThat((String) v1.get("description")).contains("RISK_V1_CALLER_FACTS_ENABLED").contains("/api/v2/risk/assess");
         assertThat((Map<String, Object>) v1.get("responses")).as("the flag-off answer is documented").containsKey("410");
 
@@ -105,6 +107,8 @@ class RiskContextOpenApiContractTest {
         Map<String, Object> op = (Map<String, Object>) path(spec, "paths", "/api/v1/risk/loan-eligibility", "post");
 
         assertThat((List<Map<String, Object>>) op.get("security")).containsExactly(Map.of("bearerAuth", List.of()));
+        assertThat((String) op.get("description")).as("service callers only, no staff (DevSecOps S-4)")
+            .contains("SERVICE_CALLERS_ELIGIBILITY").doesNotContainIgnoringCase("staff");
         assertThat((Map<String, Object>) op.get("responses")).containsKeys("200", "400", "404", "503");
         assertThat((String) path(op, "responses", "503", "description")).contains("CUSTOMER_SERVICE_UNAVAILABLE");
         Map<String, Object> request = (Map<String, Object>) path(spec, "components", "schemas", "LoanEligibilityRequest");
