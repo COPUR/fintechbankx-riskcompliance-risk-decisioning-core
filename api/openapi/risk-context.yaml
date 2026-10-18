@@ -9,7 +9,8 @@ info:
     POST /api/v2/risk/assess takes ids and amounts only and resolves the
     counterparty's country risk and the customer's velocity itself.
     POST /api/v1/risk/assess (caller-stated facts) is deprecated and answers
-    only while RISK_V1_CALLER_FACTS_ENABLED is true. POST
+    only while RISK_V1_CALLER_FACTS_ENABLED is true (the default until payments
+    is on v2). POST
     /api/v1/risk/loan-eligibility moves the loan eligibility decision from the
     customer context to risk.
 servers:
@@ -122,8 +123,11 @@ paths:
         limit customer derives from income and score). The answer is ELIGIBLE
         or INELIGIBLE with one reason code. Nothing is stored here: the loan
         service records the decision with its application. Callers: the loan
-        service (SERVICE role, client on SERVICE_CALLERS_ELIGIBILITY) and bank
-        staff.
+        services only (SERVICE role, client on SERVICE_CALLERS_ELIGIBILITY);
+        no user role opens this operation. Every decision is logged with the
+        caller's client and the customer id, never the score. A customer
+        answer that is not the asked customer's credit standing, or a 404 that
+        is not the customer context's own CUSTOMER_NOT_FOUND body, is a 503.
       security:
         - bearerAuth: []
       parameters:
@@ -190,10 +194,11 @@ paths:
         Deprecated (screening-facts plan, 2026-10-18): the caller states
         highRiskCountry and velocityScore, which risk now resolves itself on
         POST /api/v2/risk/assess. This operation answers only while the
-        service runs with RISK_V1_CALLER_FACTS_ENABLED=true (off by default);
-        otherwise it is 410 API_VERSION_GONE with a body naming
-        /api/v2/risk/assess. Callers move to v2 before the flag is turned off
-        (runbook cutover precondition).
+        service runs with RISK_V1_CALLER_FACTS_ENABLED=true, which is true by default
+        so a release before payments moves to v2 breaks nothing; once payments
+        is on v2 the operator sets it to false (runbook cutover step 2) and
+        this operation is 410 API_VERSION_GONE with a body naming
+        /api/v2/risk/assess.
 
         Decides once per transactionId. transactionId is unique across all
         callers of this service, so callers must namespace their ids (for
@@ -251,8 +256,9 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '410':
           description: |-
-            API_VERSION_GONE: RISK_V1_CALLER_FACTS_ENABLED is off (the
-            default). The message names POST /api/v2/risk/assess and its body.
+            API_VERSION_GONE: RISK_V1_CALLER_FACTS_ENABLED has been set to
+            false (after payments moved to v2). The message names POST
+            /api/v2/risk/assess and its body.
           content:
             application/json:
               schema:

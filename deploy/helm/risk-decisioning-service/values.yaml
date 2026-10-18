@@ -116,14 +116,15 @@ config:
   RISK_COUNTRY_LIST_MAX_AGE: P35D
   # Trailing window over the customer's own stored assessments for the velocity score (ISO 8601 duration).
   RISK_VELOCITY_WINDOW: PT24H
-  # Deprecated POST /api/v1/risk/assess (caller-stated facts): "false" answers 410 API_VERSION_GONE naming v2.
-  # "true" only for the parity window in which an older payments build still sends v1 (runbook step 2).
-  RISK_V1_CALLER_FACTS_ENABLED: "false"
+  # Deprecated POST /api/v1/risk/assess (caller-stated facts). "true" (the default) keeps v1 answering, so this
+  # release deploys before payments moves to v2 without an outage; set "false" once payments is on v2
+  # (runbook cutover step 2), and v1 answers 410 API_VERSION_GONE naming v2.
+  RISK_V1_CALLER_FACTS_ENABLED: "true"
   # Customer service the loan-eligibility adapter reads GET /api/v1/customers/{id}/credit-standing from
-  # (in-cluster, mesh mTLS). Required; http(s) URL. The realm client it authenticates as is
-  # CUSTOMER_CLIENT_ID; its credential comes only from customerClient below (never a config key: the render
-  # refuses CUSTOMER_CLIENT_CREDENTIAL in config). CUSTOMER_TOKEN_URI is optional and defaults to the
-  # issuer's token endpoint (OIDC_ISSUER_URI/protocol/openid-connect/token); set it only for another endpoint.
+  # (in-cluster, mesh mTLS; the mesh allows risk that one route). Required; http(s) URL. The realm client it
+  # authenticates as is CUSTOMER_CLIENT_ID; its credential and the token endpoint come only from the
+  # oidc-client ExternalSecret (externalSecret.oidcClientSecretName below): the render refuses
+  # CUSTOMER_CLIENT_CREDENTIAL and CUSTOMER_TOKEN_URI as config keys.
   CUSTOMER_SERVICE_URL: ""
   CUSTOMER_CLIENT_ID: svc-rsk-decisioning
 
@@ -149,18 +150,6 @@ kafkaTls:
 metrics:
   squad: risk
 
-# Credential of the realm client config.CUSTOMER_CLIENT_ID, for the client-credentials
-# token the loan-eligibility adapter sends to the customer service. The same route as
-# kafkaTls: an existing Kubernetes Secret in the namespace (synced by the platform's
-# secret tooling; this chart ships no Secret or secret-store resource and the
-# ExternalSecrets above read only the two database paths), rendered on the app pods
-# as CUSTOMER_CLIENT_CREDENTIAL from valueFrom.secretKeyRef, never in the ConfigMap
-# and never on the migration Job. Required: the chart refuses to render without the
-# Secret name, so eligibility cannot silently answer 503 for want of a credential.
-customerClient:
-  secretName: ""
-  credentialKey: client-credential
-
 # Database credential, synced from AWS Secrets Manager by External Secrets Operator.
 externalSecret:
   enabled: true
@@ -175,6 +164,13 @@ externalSecret:
   # {"username","password"}, read only by the migration Job below. The service
   # pods never mount it; the chart refuses to render without it.
   migrationSecretName: ""
+  # Required. The identity client credential has one home (identity repo, docs/identity/CLIENT_SECRET_DELIVERY.md):
+  # Secrets Manager entry <env>/risk-decisioning-service/oidc-client, a JSON object {client_id, client_secret,
+  # issuer_uri, token_uri} that terraform creates, publish-oidc-client-secrets.sh fills and the realm import
+  # reads. This chart syncs it with its own ExternalSecret (risk-decisioning-service-oidc-client, the same
+  # ClusterSecretStore): client_secret -> CUSTOMER_CLIENT_CREDENTIAL, token_uri -> CUSTOMER_TOKEN_URI, read by the
+  # app pods with secretKeyRef (never the migration Job, never the ConfigMap). Rotation: runbook step 2.
+  oidcClientSecretName: ""
   refreshInterval: 1h
 
 topologySpread:

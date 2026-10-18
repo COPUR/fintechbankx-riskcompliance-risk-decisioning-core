@@ -43,6 +43,8 @@ public record TransactionAssessmentCommand(
         if (customerId == null || customerId.isBlank()) {
             throw new IllegalArgumentException("customerId is required");
         }
+        // Canonical as the customer context keeps it (shared-kernel CustomerId.of trims): one customer, one velocity.
+        customerId = customerId.trim();
         if (customerId.length() > MAX_CUSTOMER_ID_LENGTH) {
             throw new IllegalArgumentException("customerId must be at most " + MAX_CUSTOMER_ID_LENGTH + " characters");
         }

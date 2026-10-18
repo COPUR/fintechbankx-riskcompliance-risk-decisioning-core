@@ -13,6 +13,7 @@ public record LoanEligibilityCommand(String customerId, BigDecimal requestedAmou
         if (customerId == null || customerId.isBlank()) {
             throw new IllegalArgumentException("customerId is required");
         }
+        customerId = customerId.trim();
         if (customerId.length() > TransactionAssessmentCommand.MAX_CUSTOMER_ID_LENGTH) {
             throw new IllegalArgumentException("customerId must be at most " + TransactionAssessmentCommand.MAX_CUSTOMER_ID_LENGTH + " characters");
         }

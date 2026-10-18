@@ -5,12 +5,15 @@ import com.bank.risk.domain.CustomerServiceUnavailableException;
 import com.bank.risk.domain.port.out.CustomerCreditProfilePort;
 import com.bank.risk.infrastructure.web.CorrelationIdFilter;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.MDC;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
+import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.math.BigDecimal;
 import java.util.Objects;
@@ -23,12 +26,19 @@ import java.util.UUID;
  * risk; customerId, creditScore optional, creditLimit, usedCredit,
  * availableCredit, currency). Carries this service's
  * client-credentials token and the current interaction id. A 404 is an unknown
- * customer; any other failure (transport, 4xx, 5xx, an unreadable body) is
+ * customer only with customer's own not-found body (customer
+ * ApiExceptionHandler: application/json ErrorResponse with code
+ * {@value #CUSTOMER_NOT_FOUND_CODE}); a bare 404, another code or another
+ * shape (an unmapped route, an older customer build, an ingress or mesh 404)
+ * is the customer service being unavailable, so the caller retries instead of
+ * reading a terminal answer. The body must name the customer asked about. Any
+ * other failure (transport, 4xx, 5xx, an unreadable body) is
  * {@link CustomerServiceUnavailableException}, never a decision.
  */
 public class CustomerCreditClient implements CustomerCreditProfilePort {
 
     static final String CREDIT_PATH = "/api/v1/customers/{customerId}/credit-standing";
+    static final String CUSTOMER_NOT_FOUND_CODE = "CUSTOMER_NOT_FOUND";
 
     private final RestClient restClient;
     private final BearerTokenProvider tokens;
@@ -49,7 +59,11 @@ public class CustomerCreditClient implements CustomerCreditProfilePort {
                     .exchange((request, response) -> {
                         int status = response.getStatusCode().value();
                         if (status == 404) {
-                            return Optional.empty();
+                            if (isCustomerNotFound(response)) {
+                                return Optional.empty();
+                            }
+                            throw new CustomerServiceUnavailableException("GET " + CREDIT_PATH
+                                    + " answered 404 without the customer's not-found body (an unmapped route or another build)", null);
                         }
                         if (!response.getStatusCode().is2xxSuccessful()) {
                             throw new CustomerServiceUnavailableException(
@@ -64,12 +78,30 @@ public class CustomerCreditClient implements CustomerCreditProfilePort {
         }
     }
 
+    /** Customer's ErrorResponse (code, message, interactionId, timestamp) as application/json with code CUSTOMER_NOT_FOUND; nothing else. */
+    private static boolean isCustomerNotFound(ClientHttpResponse response) {
+        MediaType contentType = response.getHeaders().getContentType();
+        if (contentType == null || !MediaType.APPLICATION_JSON.equalsTypeAndSubtype(contentType)) {
+            return false;
+        }
+        try {
+            ErrorBody body = new ObjectMapper().readValue(response.getBody(), ErrorBody.class);
+            return body != null && CUSTOMER_NOT_FOUND_CODE.equals(body.code());
+        } catch (IOException | RuntimeException notTheErrorShape) {
+            return false;
+        }
+    }
+
     private static CustomerCreditProfile toProfile(CreditResponse body, String customerId) {
         if (body == null) {
             throw new CustomerServiceUnavailableException("GET " + CREDIT_PATH + " answered without a body", null);
         }
+        if (body.customerId() == null || !body.customerId().trim().equals(customerId)) {
+            throw new CustomerServiceUnavailableException("GET " + CREDIT_PATH
+                    + " answered with the credit standing of another customer (or none); refusing to decide on it", null);
+        }
         try {
-            return new CustomerCreditProfile(body.customerId() == null ? customerId : body.customerId(), body.currency(),
+            return new CustomerCreditProfile(customerId, body.currency(),
                     body.creditLimit(), body.usedCredit(), body.availableCredit(), body.creditScore(), null);
         } catch (IllegalArgumentException | NullPointerException notACreditPosition) {
             throw new CustomerServiceUnavailableException("GET " + CREDIT_PATH + " answered something that is not a credit position: "
@@ -89,5 +121,10 @@ public class CustomerCreditClient implements CustomerCreditProfilePort {
     @JsonIgnoreProperties(ignoreUnknown = true)
     record CreditResponse(String customerId, String currency, BigDecimal creditLimit, BigDecimal usedCredit,
                           BigDecimal availableCredit, Integer creditScore) {
+    }
+
+    /** Customer's ApiExceptionHandler.ErrorResponse, read for the not-found code only. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record ErrorBody(String code, String message) {
     }
 }

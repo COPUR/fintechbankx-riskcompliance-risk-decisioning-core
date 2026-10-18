@@ -19,8 +19,9 @@ import org.springframework.web.bind.annotation.*;
  * <p>POST /api/v1/risk/assess takes the risk facts from the caller and is
  * deprecated (screening-facts plan, 2026-10-18): risk resolves them itself on
  * POST /api/v2/risk/assess. It answers only while RISK_V1_CALLER_FACTS_ENABLED
- * is true, which keeps payments working until they move; off (the default) it
- * is 410 API_VERSION_GONE with a body that names v2. Reading a stored decision
+ * is true (the default, so this release deploys before payments moves without
+ * an outage); the operator turns it off once payments is on v2, and v1 is then
+ * 410 API_VERSION_GONE with a body that names v2. Reading a stored decision
  * (GET /api/v1/risk/assessments/{transactionId}) is not deprecated.
  */
 @RestController
@@ -36,7 +37,7 @@ public class RiskController {
 
     /** Receives the transactional use case from RiskConfiguration, never the bare service. */
     public RiskController(RiskAssessmentUseCase service,
-                          @Value("${risk.v1.caller-facts-enabled:false}") boolean v1CallerFactsEnabled) {
+                          @Value("${risk.v1.caller-facts-enabled:true}") boolean v1CallerFactsEnabled) {
         this.service = service;
         this.v1CallerFactsEnabled = v1CallerFactsEnabled;
     }

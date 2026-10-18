@@ -4,24 +4,35 @@
 # FATF publication the operator names. The whole list is replaced in one transaction, so the service never
 # sees a half-loaded list, and every row of a load carries the same loaded_at (the transaction's start time).
 #
-# Usage: scripts/ops/load-high-risk-countries.sh <conninfo> <codes file> <list source> <list version>
+# Usage: scripts/ops/load-high-risk-countries.sh [--allow-shrink] <conninfo> <codes file> <list source> <list version>
+#   --allow-shrink the new list may hold fewer than 90% of the rows now loaded. Without it such a load is
+#                 refused: a truncated file must not quietly replace a full list.
 #   conninfo      psql connection string or URI for the service database, as the schema owner (the runtime
-#                 role may only read the table). It must not carry a password; use PGPASSFILE, PGSERVICE or
+#                 role may only read the table). It must not carry a password, neither as a keyword, nor in the
+#                 URI user-info (user:pass@host), nor as a URI query parameter; use PGPASSFILE, PGSERVICE or
 #                 the connection service file, so the credential never lands in a shell history or a job log.
 #   codes file    e.g. fatf-2026-06.txt with one upper-case alpha-2 code per line.
 #   list source   e.g. FATF
 #   list version  e.g. 2026-06 (the plenary month)
 #
 # Refuses, and changes nothing: a conninfo with a password, an unreadable or empty file (no codes after
-# comments), a line that is not an upper-case alpha-2 code, a blank source or version. Rehearsed by
-# scripts/migration/verify-high-risk-country-load.sh (CI: deploy/data-split-rehearsal).
+# comments), a line that is not an upper-case alpha-2 code, a blank source or version, a list below 90% of
+# the current rows without --allow-shrink. Rehearsed by scripts/migration/verify-high-risk-country-load.sh
+# (CI: deploy/data-split-rehearsal).
 set -euo pipefail
 
 usage() {
-  echo "usage: $(basename "$0") <conninfo> <codes file> <list source> <list version>" >&2
+  echo "usage: $(basename "$0") [--allow-shrink] <conninfo> <codes file> <list source> <list version>" >&2
   exit 2
 }
 
+allow_shrink=0
+while [ "$#" -gt 0 ] && [ "${1#--}" != "$1" ]; do
+  case "$1" in
+    --allow-shrink) allow_shrink=1; shift ;;
+    *) usage ;;
+  esac
+done
 [ "$#" -eq 4 ] || usage
 conninfo="$1"
 codes_file="$2"
@@ -29,8 +40,9 @@ list_source="$3"
 list_version="$4"
 schema="sc_rsk_decisioning"
 
-# A credential in the connection string would be visible in ps, shell history and job logs.
-if grep -qiE '(^|[[:space:]])pass(word)?[[:space:]]*=' <<<"$conninfo" || grep -qE '^[a-z]+://[^/@]*:[^/@]*@' <<<"$conninfo"; then
+# A credential in the connection string would be visible in ps, shell history and job logs: the keyword form,
+# the URI user-info form (user:pass@host) and the URI query-parameter form (after ? or &) are all refused.
+if grep -qiE '(^|[[:space:]?&])pass(word)?[[:space:]]*=' <<<"$conninfo" || grep -qE '^[a-z]+://[^/@]*:[^/@]*@' <<<"$conninfo"; then
   echo "refused: the conninfo must not carry a password; use PGPASSFILE or a connection service" >&2
   exit 1
 fi
@@ -56,6 +68,13 @@ while IFS= read -r line || [ -n "$line" ]; do
   codes+=("$code")
 done < "$codes_file"
 [ "${#codes[@]}" -gt 0 ] || { echo "refused: '$codes_file' holds no country codes" >&2; exit 1; }
+
+# A truncated file must not quietly replace a full list: below 90% of the rows now loaded needs --allow-shrink.
+current="$(psql -X -At -v ON_ERROR_STOP=1 "$conninfo" -c "SELECT count(*) FROM ${schema}.high_risk_country")"
+if [ "$allow_shrink" -eq 0 ] && [ "$current" -gt 0 ] && [ $(( ${#codes[@]} * 10 )) -lt $(( current * 9 )) ]; then
+  echo "refused: ${#codes[@]} codes would shrink the list from $current rows (below 90%); pass --allow-shrink to replace it anyway" >&2
+  exit 1
+fi
 
 # One transaction: delete, insert every code with the same loaded_at (now() is the transaction start), report.
 {

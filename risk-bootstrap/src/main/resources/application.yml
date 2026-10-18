@@ -163,9 +163,10 @@ risk:
     # capped at 100 (VelocityPolicy): 4 prior -> MEDIUM_VELOCITY, 7 prior -> HIGH_VELOCITY.
     window: ${RISK_VELOCITY_WINDOW:PT24H}
   v1:
-    # POST /api/v1/risk/assess (caller-stated facts) is deprecated. Off (default): 410 API_VERSION_GONE
-    # naming v2. On only while payments still call v1; "flag off, callers on v2" is a cutover precondition.
-    caller-facts-enabled: ${RISK_V1_CALLER_FACTS_ENABLED:false}
+    # POST /api/v1/risk/assess (caller-stated facts) is deprecated. On (the default, so this release deploys
+    # before payments moves to v2 without an outage): v1 keeps answering. The operator sets it to false
+    # once payments is on v2 (runbook cutover step 2); then v1 is 410 API_VERSION_GONE naming v2.
+    caller-facts-enabled: ${RISK_V1_CALLER_FACTS_ENABLED:true}
   customer:
     # Loan eligibility reads GET /api/v1/customers/{id}/credit-standing from the customer service (mesh mTLS in-cluster)
     # with a client-credentials token for this service's client. The client credential is bound from

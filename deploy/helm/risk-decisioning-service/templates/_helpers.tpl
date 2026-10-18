@@ -23,6 +23,27 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 {{ include "risk.name" . }}-db-migration
 {{- end -}}
 
+{{- define "risk.oidcClientSecretName" -}}
+{{ include "risk.name" . }}-oidc-client
+{{- end -}}
+
+{{/*
+The Secrets Manager entry of the identity client credential: exactly
+<env>/<service account>/oidc-client (identity CLIENT_SECRET_DELIVERY.md), the one
+the realm import reads, so the value the service sends is the value Keycloak holds.
+Required; risk.guard runs this before any workload renders.
+*/}}
+{{- define "risk.oidcClientEntry" -}}
+{{- $entry := trim (toString (default "" .Values.externalSecret.oidcClientSecretName)) -}}
+{{- if not $entry -}}
+{{- fail (printf "externalSecret.oidcClientSecretName is required: the Secrets Manager entry <env>/%s/oidc-client holding the identity client credential (client_secret) and token endpoint (token_uri), synced by the chart's oidc-client ExternalSecret" .Values.serviceAccount.name) -}}
+{{- end -}}
+{{- if not (regexMatch (printf "^[a-z0-9-]+/%s/oidc-client$" (regexQuoteMeta (toString .Values.serviceAccount.name))) $entry) -}}
+{{- fail (printf "externalSecret.oidcClientSecretName must be <env>/%s/oidc-client (the one home of the identity client credential), got %s" .Values.serviceAccount.name $entry) -}}
+{{- end -}}
+{{- $entry -}}
+{{- end -}}
+
 {{/*
 Flyway migration Job (templates/migration-job.yaml, decision 0002). Its pods
 carry app.kubernetes.io/name=<service account>, on which the mesh grants Aurora
@@ -148,9 +169,12 @@ Adapter: every route of this chart that feeds the pod's environment.
   kafka.runtime    .Values.kafka.runtime (msk or strimzi)
   externalSecret   enabled from .Values.externalSecret.enabled; data is the
                    runtime secret this chart renders (SPRING_DATASOURCE_PASSWORD
-                   <- remoteSecretName "password"), extraData the migration
-                   secret (DB_MIGRATION_USERNAME / _PASSWORD <- migrationSecretName),
-                   dataFrom .Values.externalSecret.dataFrom (refused when set)
+                   <- remoteSecretName "password") and the identity client
+                   secret (CUSTOMER_CLIENT_CREDENTIAL <- oidcClientSecretName
+                   "client_secret", CUSTOMER_TOKEN_URI <- "token_uri"),
+                   extraData the migration secret (DB_MIGRATION_USERNAME /
+                   _PASSWORD <- migrationSecretName), dataFrom
+                   .Values.externalSecret.dataFrom (refused when set)
 
 The guard refuses, in every relaxed-binding spelling: datasource, Flyway,
 Liquibase and R2DBC names (but not SPRING_DATASOURCE_USERNAME/_PASSWORD),
@@ -215,7 +239,10 @@ every non-alphanumeric character dropped.
         "configMapName" .Values.databaseCa.configMapName)
       "kafka" (dict "runtime" ((.Values.kafka | default dict).runtime | default ""))
       "externalSecret" (dict "enabled" $es.enabled
-        "data" (list (dict "secretKey" "SPRING_DATASOURCE_PASSWORD" "property" "password" "remoteSecretName" $es.remoteSecretName))
+        "data" (list
+          (dict "secretKey" "SPRING_DATASOURCE_PASSWORD" "property" "password" "remoteSecretName" $es.remoteSecretName)
+          (dict "secretKey" "CUSTOMER_CLIENT_CREDENTIAL" "property" "client_secret" "remoteSecretName" $es.oidcClientSecretName)
+          (dict "secretKey" "CUSTOMER_TOKEN_URI" "property" "token_uri" "remoteSecretName" $es.oidcClientSecretName))
         "extraData" (list
           (dict "secretKey" "DB_MIGRATION_USERNAME" "property" "username" "remoteSecretName" $es.migrationSecretName)
           (dict "secretKey" "DB_MIGRATION_PASSWORD" "property" "password" "remoteSecretName" $es.migrationSecretName))
@@ -224,6 +251,9 @@ every non-alphanumeric character dropped.
 {{- if index $.Values $route -}}
 {{- fail (printf "%s is not a value of this chart: it renders no such env route (config keys go through the datasource/TLS guard; the image fixes JVM options)" $route) -}}
 {{- end -}}
+{{- end -}}
+{{- if hasKey .Values "customerClient" -}}
+{{- fail "customerClient is not a value of this chart: the identity client credential comes from the chart's own oidc-client ExternalSecret (externalSecret.oidcClientSecretName), never from a Secret created outside the chart" -}}
 {{- end -}}
 {{- if not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" (toString .Values.serviceAccount.name)) -}}
 {{- fail (printf "serviceAccount.name must be a DNS label ([a-z0-9-], at most 63 characters), got %q" (toString .Values.serviceAccount.name)) -}}
@@ -248,9 +278,10 @@ every non-alphanumeric character dropped.
 {{- if regexMatch "^(SPRINGJPA|SPRINGSQLINIT|HIBERNATE|JAKARTAPERSISTENCE|JAVAXPERSISTENCE|RISKDATABASEFLYWAY)" $name -}}
 {{- fail (printf "config.%s must not be set: the schema belongs to the migration Job; Hibernate schema management, SQL init and risk.database.flyway would change it at startup, before the runtime-role check" $key) -}}
 {{- end -}}
-{{- /* The identity client credential (risk.customer.client-credential, bound from CUSTOMER_CLIENT_CREDENTIAL) in any relaxed-binding spelling. */ -}}
-{{- if regexMatch "^(RISK)?CUSTOMERCLIENTCREDENTIAL$" $name -}}
-{{- fail (printf "config.%s must not be set: the customer client credential comes only from the Secret customerClient.secretName (CUSTOMER_CLIENT_CREDENTIAL by secretKeyRef on the app pods), never the ConfigMap" $key) -}}
+{{- /* The identity client credential and token endpoint (risk.customer.client-credential / token-uri, bound from
+       CUSTOMER_CLIENT_CREDENTIAL / CUSTOMER_TOKEN_URI) in any relaxed-binding spelling: Secret only. */ -}}
+{{- if regexMatch "^(RISK)?CUSTOMER(CLIENTCREDENTIAL|TOKENURI)$" $name -}}
+{{- fail (printf "config.%s must not be set: the identity client credential and token endpoint come only from the oidc-client ExternalSecret (externalSecret.oidcClientSecretName; CUSTOMER_CLIENT_CREDENTIAL and CUSTOMER_TOKEN_URI by secretKeyRef on the app pods), never the ConfigMap" $key) -}}
 {{- end -}}
 {{- end -}}
 {{- /* Screening facts and the customer client (screening-facts plan): values the pods must not start with half-set. */ -}}
@@ -271,18 +302,7 @@ every non-alphanumeric character dropped.
 {{- fail (printf "config.SERVICE_CALLERS_ELIGIBILITY must not list this service's own client (%s): a token this service obtains for the customer read must never also open its own loan-eligibility endpoint" $ownClient) -}}
 {{- end -}}
 {{- end -}}
-{{- $cc := .Values.customerClient | default dict -}}
-{{- $secret := trim (toString (default "" $cc.secretName)) -}}
-{{- if not $secret -}}
-{{- fail "customerClient.secretName is required: the Secret holding the credential of the realm client config.CUSTOMER_CLIENT_ID, rendered as CUSTOMER_CLIENT_CREDENTIAL by secretKeyRef (the chart ships no Secret; the platform syncs it)" -}}
-{{- end -}}
-{{- if not (regexMatch "^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$" $secret) -}}
-{{- fail (printf "customerClient.secretName must be a DNS subdomain (lower-case [a-z0-9.-], at most 253 characters), got %q" $secret) -}}
-{{- end -}}
-{{- $ccKey := toString (default "" $cc.credentialKey) -}}
-{{- if not (regexMatch "^[-._a-zA-Z0-9]+$" $ccKey) -}}
-{{- fail (printf "customerClient.credentialKey must be a Secret key ([-._a-zA-Z0-9]+), got %q" $ccKey) -}}
-{{- end -}}
+{{- $_ := include "risk.oidcClientEntry" . -}}
 {{- $url := trim (toString (default "" (index .Values.config "DB_URL"))) -}}
 {{- if and $url (not (hasPrefix "jdbc:postgresql:" $url)) -}}
 {{- fail "config.DB_URL must be a jdbc:postgresql: URL: the service connects with PgJDBC, without a wrapper driver" -}}
